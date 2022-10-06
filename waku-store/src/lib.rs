@@ -2,7 +2,6 @@ extern crate core;
 
 pub mod behaviour;
 mod codec;
-pub mod common;
 pub mod pagination;
 pub mod protocol;
 pub mod request;
