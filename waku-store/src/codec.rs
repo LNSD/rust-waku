@@ -5,7 +5,8 @@ use asynchronous_codec::{FramedRead, FramedWrite};
 use futures::{AsyncRead, AsyncWrite, SinkExt, StreamExt};
 use libp2p::request_response::RequestResponseCodec;
 
-use crate::common::protobuf_codec;
+use waku_core::protobuf_codec;
+
 use crate::protocol::WakuStoreProtocol;
 use crate::request::HistoryRequest;
 use crate::response::HistoryResponse;
