@@ -1,5 +1,6 @@
 [workspace]
 members = [
     "waku-core",
+    "waku-message",
     "waku-store"
 ]
