@@ -4,5 +4,4 @@ members = [
     "waku-enr",
     "waku-message",
     "waku-relay",
-    "waku-store"
 ]
