@@ -1,0 +1,43 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches:
+    - "main"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_and_test:
+    name: "build and test"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
+
+      - name: Install Buf
+        uses: bufbuild/buf-setup-action@v1
+
+      - name: Install Protoc's Prost plugin
+        uses: baptiste0928/cargo-install@v1
+        with:
+          crate: protoc-gen-prost
+
+      - name: Install Protoc's Prost crate plugin
+        uses: baptiste0928/cargo-install@v1
+        with:
+          crate: protoc-gen-prost-crate
+
+      - run: cargo build
+      - run: cargo test
