@@ -16,6 +16,7 @@ thiserror = "1.0.37"
 tokio = "1.21.2"
 unsigned-varint = "0.7.1"
 uuid = { version = "1.1.2", features = ["v4"] }
+waku-core = { version = "0.1.0", path = "../waku-core" }
 
 [dev-dependencies]
 env_logger = "0.9.1"
