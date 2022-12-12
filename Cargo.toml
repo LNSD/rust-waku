@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "waku-core",
+    "waku-enr",
     "waku-message",
     "waku-relay",
     "waku-store"
