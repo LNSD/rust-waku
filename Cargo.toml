@@ -2,5 +2,6 @@
 members = [
     "waku-core",
     "waku-message",
+    "waku-relay",
     "waku-store"
 ]
