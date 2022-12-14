@@ -1,11 +1,8 @@
-use enr::CombinedKey;
+use enr::{Enr, EnrBuilder, EnrKey};
 use multiaddr::Multiaddr;
 
 use crate::capabilities::WakuEnrCapabilities;
 use crate::multiaddrs;
-
-pub type Enr = enr::Enr<CombinedKey>;
-pub type EnrBuilder = enr::EnrBuilder<CombinedKey>;
 
 /// The ENR field specifying the node multiaddrs.
 pub const WAKU2_MULTIADDR_ENR_KEY: &str = "multiaddrs";
@@ -13,7 +10,7 @@ pub const WAKU2_MULTIADDR_ENR_KEY: &str = "multiaddrs";
 pub const WAKU2_CAPABILITIES_ENR_KEY: &str = "waku2";
 
 /// Extension trait for Waku v2 ENRs
-pub trait Waku2Enr {
+pub trait EnrExt {
     /// The multiaddrs field associated with the ENR.
     fn multiaddrs(&self) -> Option<Vec<Multiaddr>>;
 
@@ -21,7 +18,7 @@ pub trait Waku2Enr {
     fn waku2(&self) -> Option<WakuEnrCapabilities>;
 }
 
-impl Waku2Enr for Enr {
+impl<T: EnrKey> EnrExt for Enr<T> {
     fn multiaddrs(&self) -> Option<Vec<Multiaddr>> {
         if let Some(multiaddrs_bytes) = self.get(WAKU2_MULTIADDR_ENR_KEY) {
             return multiaddrs::decode(multiaddrs_bytes).ok();
@@ -40,13 +37,13 @@ impl Waku2Enr for Enr {
     }
 }
 
-pub trait WakuEnrBuilder {
+pub trait EnrBuilderExt {
     fn multiaddrs(&mut self, multiaddrs: Vec<Multiaddr>) -> &mut Self;
 
     fn waku2(&mut self, capabilities: WakuEnrCapabilities) -> &mut Self;
 }
 
-impl WakuEnrBuilder for EnrBuilder {
+impl<T: EnrKey> EnrBuilderExt for EnrBuilder<T> {
     /// Adds a Waku `multiaddr` field to the EnrBuilder.
     fn multiaddrs(&mut self, addrs: Vec<Multiaddr>) -> &mut Self {
         let multiaddrs = multiaddrs::encode(&addrs);

@@ -2,8 +2,9 @@
 //! RFC 31/WAKU2-ENR: https://rfc.vac.dev/spec/31/
 
 pub use crate::capabilities::*;
-pub use crate::enr::*;
+pub use crate::enr_ext::*;
+pub use enr;
 
 mod capabilities;
-mod enr;
+mod enr_ext;
 mod multiaddrs;

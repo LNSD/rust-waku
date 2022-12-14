@@ -1,10 +1,10 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use enr::{CombinedKey, EnrKey};
 use multiaddr::Multiaddr;
 
 use waku_enr;
-use waku_enr::{Enr, EnrBuilder, Waku2Enr, WakuEnrBuilder, WakuEnrCapabilities};
+use waku_enr::enr::{CombinedKey, Enr, EnrBuilder, EnrKey};
+use waku_enr::{EnrBuilderExt, EnrExt, WakuEnrCapabilities};
 
 ///! https://rfc.vac.dev/spec/31/#many-connection-types
 #[test]
@@ -70,7 +70,7 @@ fn test_decode_waku_enr() {
     let enr_base64 = "enr:-PC4QPdY95OvXxYSdzPnWTCEY3u0jr0t925ArgGDGJfsDemgMvl-PuXr23r9fJnJGncdx1yPYT7oB6OJoqsiUjSnF7sBgmlkgnY0gmlwhAECAwSDaXA2kBI0VgABAQABAAAAAAAAAUKKbXVsdGlhZGRyc60AEjYLZXhhbXBsZS5jb20GAbveAwAXNhBxdWljLmV4YW1wbGUuY29tBgG7zAOJc2VjcDI1NmsxoQL72vzMVCejPltbXNukOvJc8Mqj-IiawTVxiYY1WCRSX4N0Y3CCJ3WEdGNwNoJ2X4N1ZHCCTuqEdWRwNoKd1IV3YWt1MgM";
 
     // When
-    let enr: Enr = enr_base64.parse().expect("valid enr string");
+    let enr: Enr<CombinedKey> = enr_base64.parse().expect("valid enr string");
 
     let tcp = enr.tcp4();
     let udp = enr.udp4();
