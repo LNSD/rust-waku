@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 bytes = "1.3.0"
 libp2p = { version = "0.50.0", features = ["full"] }
-prost = "0.11.3"
+prost = "0.11.5"
 strum_macros = "0.24.3"
 thiserror = "1.0.38"
 waku-message = { version = "0.1.0", path = "../waku-message" }
