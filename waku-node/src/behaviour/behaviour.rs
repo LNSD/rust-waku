@@ -11,6 +11,7 @@ pub struct Config {
 pub struct Behaviour {
     pub ping: ping::Behaviour,
     pub identify: identify::Behaviour,
+    pub waku_relay: waku_relay::Behaviour,
 }
 
 impl Behaviour {
@@ -23,6 +24,7 @@ impl Behaviour {
         Self {
             ping: Default::default(),
             identify,
+            waku_relay: Default::default(),
         }
     }
 }

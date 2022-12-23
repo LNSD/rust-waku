@@ -2,14 +2,16 @@ use libp2p::{Multiaddr, PeerId};
 use log::debug;
 use tokio::sync::{mpsc, oneshot};
 
+use waku_message::{PubsubTopic, WakuMessage};
+
 use crate::behaviour::Behaviour;
 use crate::behaviour::Config as BehaviourConfig;
-use crate::config::NodeConfig;
 use crate::event_loop::{Command, Event, EventLoop};
+use crate::NodeConfig;
 use crate::transport::create_transport;
 
 pub struct Node {
-    config: NodeConfig,
+    pub config: NodeConfig,
     peer_id: PeerId,
     command_sender: mpsc::Sender<Command>,
     event_receiver: mpsc::Receiver<Event>,
@@ -29,7 +31,7 @@ impl Node {
 
         let (command_sender, command_receiver) = mpsc::channel(32);
         let (event_sender, event_receiver) = mpsc::channel(32);
-        let mut ev_loop = EventLoop::new(switch, command_receiver, event_sender);
+        let ev_loop = EventLoop::new(switch, command_receiver, event_sender);
 
         debug!("start node event loop");
         tokio::spawn(ev_loop.dispatch());
@@ -46,19 +48,54 @@ impl Node {
         self.peer_id
     }
 
-    pub async fn switch_listen_on(&self, address: Multiaddr) -> anyhow::Result<()> {
+    pub async fn recv_event(&mut self) -> Option<Event> {
+        self.event_receiver.recv().await
+    }
+
+    pub async fn switch_listen_on(&self, address: &Multiaddr) -> anyhow::Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.command_sender
-            .send(Command::switch_listen_on(address, resp_tx))
+            .send(Command::switch_listen_on(address.clone(), resp_tx))
             .await?;
 
         resp_rx.await?
     }
 
-    pub async fn switch_dial(&self, address: Multiaddr) -> anyhow::Result<()> {
+    pub async fn switch_dial(&self, address: &Multiaddr) -> anyhow::Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.command_sender
-            .send(Command::switch_dial(address, resp_tx))
+            .send(Command::switch_dial(address.clone(), resp_tx))
+            .await?;
+
+        resp_rx.await?
+    }
+
+    pub async fn relay_subscribe(&self, topic: &PubsubTopic) -> anyhow::Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.command_sender
+            .send(Command::relay_subscribe(topic.clone(), resp_tx))
+            .await?;
+
+        resp_rx.await?
+    }
+
+    pub async fn relay_unsubscribe(&self, topic: &PubsubTopic) -> anyhow::Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.command_sender
+            .send(Command::relay_unsubscribe(topic.clone(), resp_tx))
+            .await?;
+
+        resp_rx.await?
+    }
+
+    pub async fn relay_publish(
+        &self,
+        topic: &PubsubTopic,
+        message: WakuMessage,
+    ) -> anyhow::Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.command_sender
+            .send(Command::relay_publish(topic.clone(), message, resp_tx))
             .await?;
 
         resp_rx.await?

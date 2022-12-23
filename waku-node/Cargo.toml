@@ -16,3 +16,5 @@ pretty_env_logger = "0.4.0"
 strum_macros = "0.24.3"
 thiserror = "1.0.38"
 tokio = { version = "1.23.0", features = ["sync", "rt", "macros"] }
+waku-message = { version = "0.1.0", path = "../waku-message" }
+waku-relay = { version = "0.1.0", path = "../waku-relay" }
