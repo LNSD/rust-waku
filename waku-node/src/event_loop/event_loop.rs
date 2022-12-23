@@ -35,6 +35,9 @@ impl EventLoop {
                 },
                 event = self.switch.select_next_some() => match event {
                     SwarmEvent::NewListenAddr { address, .. } => info!("switch listening on: {address:?}"),
+                    SwarmEvent::Behaviour(behaviour::Event::WakuRelay(event)) => {
+                        self.handle_waku_relay_event(event).await;
+                    },
                     SwarmEvent::Behaviour(event) => debug!("{event:?}"),
                     _ => {}
                 },
@@ -69,6 +72,96 @@ impl EventLoop {
                         error!("send '{}' command response failed: {:?}.", "switch_dial", e);
                     });
             }
+
+            Command::RelaySubscribe {
+                pubsub_topic,
+                sender,
+            } => {
+                trace!("handle command: {}", "relay_subscribe");
+
+                match self
+                    .switch
+                    .behaviour_mut()
+                    .waku_relay
+                    .subscribe(&pubsub_topic)
+                {
+                    Ok(_) => sender.send(Ok(())),
+                    Err(e) => sender.send(Err(e.into())),
+                }
+                    .unwrap_or_else(|e| {
+                        error!(
+                        "send '{}' command response failed: {:?}.",
+                        "relay_subscribe", e
+                    );
+                    });
+            }
+            Command::RelayUnsubscribe {
+                pubsub_topic,
+                sender,
+            } => {
+                trace!("handle command: {}", "relay_unsubscribe");
+
+                match self
+                    .switch
+                    .behaviour_mut()
+                    .waku_relay
+                    .unsubscribe(&pubsub_topic)
+                {
+                    Ok(_) => sender.send(Ok(())),
+                    Err(e) => sender.send(Err(e.into())),
+                }
+                    .unwrap_or_else(|e| {
+                        error!(
+                        "send '{}' command response failed: {:?}.",
+                        "relay_unsubscribe", e
+                    );
+                    });
+            }
+            Command::RelayPublish {
+                pubsub_topic,
+                message,
+                sender,
+            } => {
+                trace!("handle command: {}", "relay_publish");
+
+                match self
+                    .switch
+                    .behaviour_mut()
+                    .waku_relay
+                    .publish(&pubsub_topic, message)
+                {
+                    Ok(_) => sender.send(Ok(())),
+                    Err(e) => sender.send(Err(e.into())),
+                }
+                    .unwrap_or_else(|e| {
+                        error!(
+                        "send '{}' command response failed: {:?}.",
+                        "relay_publish", e
+                    );
+                    });
+            }
+        }
+    }
+
+    async fn handle_waku_relay_event(&mut self, event: waku_relay::Event) {
+        match event {
+            waku_relay::Event::Message {
+                pubsub_topic,
+                message,
+            } => {
+                trace!("handle event: {}", "waku_relay_message");
+
+                self.event_sink
+                    .send(Event::WakuRelayMessage {
+                        pubsub_topic,
+                        message,
+                    })
+                    .await
+                    .unwrap_or_else(|e| {
+                        error!("send '{}' event failed: {:?}.", "waku_relay_message", e);
+                    });
+            }
+            _ => {}
         }
     }
 }
