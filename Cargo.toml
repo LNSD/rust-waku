@@ -3,5 +3,6 @@ members = [
     "waku-core",
     "waku-enr",
     "waku-message",
+    "waku-node",
     "waku-relay",
 ]
