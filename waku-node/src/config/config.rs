@@ -11,6 +11,7 @@ pub struct NodeConfig {
     pub tcp_ipaddr: IpAddr,
     pub tcp_port: u16,
     pub static_nodes: Vec<Multiaddr>,
+    pub keepalive: bool,
     pub relay: Option<WakuRelayConfig>,
 }
 
@@ -21,6 +22,7 @@ impl Default for NodeConfig {
             tcp_ipaddr: "0.0.0.0".parse().expect("valid ip address format"),
             tcp_port: 0,
             static_nodes: Vec::new(),
+            keepalive: false,
             relay: None,
         }
     }
@@ -71,6 +73,11 @@ impl NodeConfigBuilder {
 
     pub fn static_nodes(&mut self, nodes: Vec<Multiaddr>) -> &mut Self {
         self.config.static_nodes = nodes;
+        self
+    }
+
+    pub fn keepalive(&mut self, enable: bool) -> &mut Self {
+        self.config.keepalive = enable;
         self
     }
 
