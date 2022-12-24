@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use futures::StreamExt;
 use libp2p::swarm::SwarmEvent;
 use log::{debug, error, info, trace};
@@ -79,10 +80,24 @@ impl EventLoop {
             } => {
                 trace!("handle command: {}", "relay_subscribe");
 
+                if !self.switch.behaviour().waku_relay.is_enabled() {
+                    sender
+                        .send(Err(anyhow!("relay protocol disabled")))
+                        .unwrap_or_else(|e| {
+                            error!(
+                                "send '{}' command response failed: {:?}.",
+                                "relay_subscribe", e
+                            );
+                        });
+                    return;
+                }
+
                 match self
                     .switch
                     .behaviour_mut()
                     .waku_relay
+                    .as_mut()
+                    .unwrap()
                     .subscribe(&pubsub_topic)
                 {
                     Ok(_) => sender.send(Ok(())),
@@ -101,10 +116,24 @@ impl EventLoop {
             } => {
                 trace!("handle command: {}", "relay_unsubscribe");
 
+                if !self.switch.behaviour().waku_relay.is_enabled() {
+                    sender
+                        .send(Err(anyhow!("relay protocol disabled")))
+                        .unwrap_or_else(|e| {
+                            error!(
+                                "send '{}' command response failed: {:?}.",
+                                "relay_unsubscribe", e
+                            );
+                        });
+                    return;
+                }
+
                 match self
                     .switch
                     .behaviour_mut()
                     .waku_relay
+                    .as_mut()
+                    .unwrap()
                     .unsubscribe(&pubsub_topic)
                 {
                     Ok(_) => sender.send(Ok(())),
@@ -124,10 +153,24 @@ impl EventLoop {
             } => {
                 trace!("handle command: {}", "relay_publish");
 
+                if !self.switch.behaviour().waku_relay.is_enabled() {
+                    sender
+                        .send(Err(anyhow!("relay protocol disabled")))
+                        .unwrap_or_else(|e| {
+                            error!(
+                                "send '{}' command response failed: {:?}.",
+                                "relay_publish", e
+                            );
+                        });
+                    return;
+                }
+
                 match self
                     .switch
                     .behaviour_mut()
                     .waku_relay
+                    .as_mut()
+                    .unwrap()
                     .publish(&pubsub_topic, message)
                 {
                     Ok(_) => sender.send(Ok(())),
