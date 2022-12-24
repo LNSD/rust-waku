@@ -25,6 +25,7 @@ impl Node {
             let transport = create_transport(&config.keypair)?;
             let behaviour = Behaviour::new(BehaviourConfig {
                 local_public_key: config.keypair.public(),
+                keep_alive: config.keepalive.then_some(config.keepalive),
                 relay: config.relay.clone(),
             });
             libp2p::Swarm::with_tokio_executor(transport, behaviour, peer_id)

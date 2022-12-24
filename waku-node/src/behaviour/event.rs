@@ -7,6 +7,12 @@ pub enum Event {
     WakuRelay(waku_relay::Event),
 }
 
+impl From<void::Void> for Event {
+    fn from(_: void::Void) -> Self {
+        unreachable!()
+    }
+}
+
 impl From<ping::Event> for Event {
     fn from(event: ping::Event) -> Self {
         Event::Ping(event)

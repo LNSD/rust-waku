@@ -28,6 +28,7 @@ async fn main() -> anyhow::Result<()> {
     let config = NodeConfigBuilder::new()
         .keypair_from_secp256k1(&mut key_raw)?
         .static_nodes(nodes)
+        .keepalive(true)
         .with_waku_relay(relay_config)
         .build();
 
