@@ -30,6 +30,8 @@ jobs:
 
       - name: Install Buf
         uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Protoc's Prost plugin
         uses: baptiste0928/cargo-install@v1
