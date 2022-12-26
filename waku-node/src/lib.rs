@@ -1,4 +1,5 @@
 pub use config::*;
+pub use event_loop::*;
 pub use node::*;
 
 mod behaviour;
