@@ -5,7 +5,7 @@ use libp2p::Multiaddr;
 use tokio::time::sleep;
 
 use waku_message::{PubsubTopic, WakuMessage};
-use waku_node::{Event, memory_transport, Node, NodeConfigBuilder};
+use waku_node::{memory_transport, Event, Node, NodeConfigBuilder};
 
 fn new_node(key: &str) -> Node {
     let mut key_raw = hex::decode(key).expect("key to be valid");
@@ -80,9 +80,9 @@ async fn it_publish_and_subscribe() {
     //// Then
     assert!(matches!(event, Some(Event::WakuRelayMessage { .. })));
     if let Some(Event::WakuRelayMessage {
-                    pubsub_topic: topic,
-                    message: msg,
-                }) = event
+        pubsub_topic: topic,
+        message: msg,
+    }) = event
     {
         assert_eq!(topic, pubsub_topic);
         assert_eq!(msg, message);

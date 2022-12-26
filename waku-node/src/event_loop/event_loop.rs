@@ -55,12 +55,12 @@ impl EventLoop {
                     Ok(_) => sender.send(Ok(())),
                     Err(e) => sender.send(Err(e.into())),
                 }
-                    .unwrap_or_else(|e| {
-                        error!(
+                .unwrap_or_else(|e| {
+                    error!(
                         "send '{}' command response failed: {:?}.",
                         "switch_listen_on", e
                     );
-                    });
+                });
             }
             Command::SwitchDial { address, sender } => {
                 trace!("handle command: {}", "switch_dial");
@@ -69,9 +69,9 @@ impl EventLoop {
                     Ok(_) => sender.send(Ok(())),
                     Err(e) => sender.send(Err(e.into())),
                 }
-                    .unwrap_or_else(|e| {
-                        error!("send '{}' command response failed: {:?}.", "switch_dial", e);
-                    });
+                .unwrap_or_else(|e| {
+                    error!("send '{}' command response failed: {:?}.", "switch_dial", e);
+                });
             }
 
             Command::RelaySubscribe {
@@ -103,12 +103,12 @@ impl EventLoop {
                     Ok(_) => sender.send(Ok(())),
                     Err(e) => sender.send(Err(e.into())),
                 }
-                    .unwrap_or_else(|e| {
-                        error!(
+                .unwrap_or_else(|e| {
+                    error!(
                         "send '{}' command response failed: {:?}.",
                         "relay_subscribe", e
                     );
-                    });
+                });
             }
             Command::RelayUnsubscribe {
                 pubsub_topic,
@@ -139,12 +139,12 @@ impl EventLoop {
                     Ok(_) => sender.send(Ok(())),
                     Err(e) => sender.send(Err(e.into())),
                 }
-                    .unwrap_or_else(|e| {
-                        error!(
+                .unwrap_or_else(|e| {
+                    error!(
                         "send '{}' command response failed: {:?}.",
                         "relay_unsubscribe", e
                     );
-                    });
+                });
             }
             Command::RelayPublish {
                 pubsub_topic,
@@ -176,12 +176,12 @@ impl EventLoop {
                     Ok(_) => sender.send(Ok(())),
                     Err(e) => sender.send(Err(e.into())),
                 }
-                    .unwrap_or_else(|e| {
-                        error!(
+                .unwrap_or_else(|e| {
+                    error!(
                         "send '{}' command response failed: {:?}.",
                         "relay_publish", e
                     );
-                    });
+                });
             }
         }
     }

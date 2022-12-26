@@ -3,8 +3,8 @@ use libp2p::PeerId;
 use prost::Message;
 use strum_macros::Display;
 
-use waku_message::{MAX_WAKU_MESSAGE_SIZE, PubsubTopic, WakuMessage};
 use waku_message::proto::waku::message::v1::WakuMessage as WakuMessageProto;
+use waku_message::{PubsubTopic, WakuMessage, MAX_WAKU_MESSAGE_SIZE};
 
 #[derive(Debug, Display)]
 pub enum Event {

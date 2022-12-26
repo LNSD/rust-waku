@@ -1,6 +1,6 @@
 use std::net::IpAddr;
 
-use libp2p::identity::{Keypair, secp256k1};
+use libp2p::identity::{secp256k1, Keypair};
 use libp2p::Multiaddr;
 
 use crate::config::waku_relay_config::WakuRelayConfig;
