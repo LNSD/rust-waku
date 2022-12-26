@@ -1,6 +1,6 @@
 use std::env;
 use std::error::Error;
-use std::process::{Command, exit};
+use std::process::{exit, Command};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let out_dir = env::var_os("OUT_DIR").unwrap();

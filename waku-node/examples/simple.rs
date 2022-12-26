@@ -3,8 +3,8 @@ use libp2p::Multiaddr;
 use log::{info, LevelFilter};
 
 use waku_message::PubsubTopic;
-use waku_node::{Node, WakuRelayConfigBuilder};
 use waku_node::NodeConfigBuilder;
+use waku_node::{Node, WakuRelayConfigBuilder};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

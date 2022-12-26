@@ -7,5 +7,5 @@ pub enum Event {
     WakuRelayMessage {
         pubsub_topic: PubsubTopic,
         message: WakuMessage,
-    }
+    },
 }
