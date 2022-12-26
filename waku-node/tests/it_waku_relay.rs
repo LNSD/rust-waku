@@ -5,7 +5,7 @@ use libp2p::Multiaddr;
 use tokio::time::sleep;
 
 use waku_message::{PubsubTopic, WakuMessage};
-use waku_node::{Event, Node, NodeConfigBuilder};
+use waku_node::{Event, memory_transport, Node, NodeConfigBuilder};
 
 fn new_node(key: &str) -> Node {
     let mut key_raw = hex::decode(key).expect("key to be valid");
@@ -17,14 +17,16 @@ fn new_node(key: &str) -> Node {
         .with_waku_relay(Default::default())
         .build();
 
-    Node::new(config).expect("node creation to succeed")
+    let transport = memory_transport(&config.keypair).expect("create the transport");
+
+    Node::new_with_transport(config, transport).expect("node creation to succeed")
 }
 
 #[tokio::test]
 async fn it_publish_and_subscribe() {
     //// Setup
     let publisher_key = "dc404f7ed2d3cdb65b536e8d561255c84658e83775ee790ff46bf4d77690b0fe";
-    let publisher_addr: Multiaddr = "/ip4/127.0.0.1/tcp/23000".parse().unwrap();
+    let publisher_addr: Multiaddr = "/memory/23".parse().unwrap();
     let publisher = new_node(publisher_key);
     publisher
         .switch_listen_on(&publisher_addr)
@@ -32,7 +34,7 @@ async fn it_publish_and_subscribe() {
         .expect("listen on address");
 
     let subscriber_key = "9c0cd57a01ee12338915b42bf6232a386e467dcdbe172facd94e4623ffc9096c";
-    let subscriber_addr: Multiaddr = "/ip4/127.0.0.1/tcp/23002".parse().unwrap();
+    let subscriber_addr: Multiaddr = "/memory/32".parse().unwrap();
     let mut subscriber = new_node(subscriber_key);
     subscriber
         .switch_listen_on(&subscriber_addr)

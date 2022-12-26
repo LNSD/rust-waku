@@ -8,7 +8,7 @@ use crate::behaviour::Behaviour;
 use crate::behaviour::Config as BehaviourConfig;
 use crate::event_loop::{Command, Event, EventLoop};
 use crate::NodeConfig;
-use crate::transport::create_transport;
+use crate::transport::{BoxedP2PTransport, default_transport};
 
 pub struct Node {
     pub config: NodeConfig,
@@ -18,11 +18,13 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn new(config: NodeConfig) -> anyhow::Result<Self> {
+    pub fn new_with_transport(
+        config: NodeConfig,
+        transport: BoxedP2PTransport,
+    ) -> anyhow::Result<Self> {
         let peer_id = PeerId::from(&config.keypair.public());
 
         let switch = {
-            let transport = create_transport(&config.keypair)?;
             let behaviour = Behaviour::new(BehaviourConfig {
                 local_public_key: config.keypair.public(),
                 keep_alive: config.keepalive.then_some(config.keepalive),
@@ -44,6 +46,11 @@ impl Node {
             command_sender,
             event_receiver,
         })
+    }
+
+    pub fn new(config: NodeConfig) -> anyhow::Result<Self> {
+        let transport = default_transport(&config.keypair)?;
+        Self::new_with_transport(config, transport)
     }
 
     pub fn peer_id(&self) -> PeerId {
