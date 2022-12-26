@@ -4,7 +4,7 @@ use bytes::Bytes;
 
 use crate::content_topic::ContentTopic;
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct WakuMessage {
     pub payload: Bytes,
     pub content_topic: ContentTopic,
