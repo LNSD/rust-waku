@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "waku-core",
+    "waku-discv5",
     "waku-enr",
     "waku-node",
     "waku-relay",
