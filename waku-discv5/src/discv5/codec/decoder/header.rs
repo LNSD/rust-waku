@@ -31,9 +31,17 @@ pub enum HeaderField {
     AuthData(Bytes),
 }
 
+static HEADER_TOKENS: &[HeaderToken] = &[
+    HeaderToken::ProtocolId,
+    HeaderToken::Version,
+    HeaderToken::Flag,
+    HeaderToken::Nonce,
+    HeaderToken::AuthData,
+];
+
 pub struct Decoder<'dec> {
     buffer: &'dec mut BytesMut,
-    token: Option<HeaderToken>,
+    token_iter: Box<dyn Iterator<Item=&'static HeaderToken>>,
     cipher: Aes128Ctr,
 }
 
@@ -44,20 +52,6 @@ impl<'dec> Decoder<'dec> {
         Aes128Ctr::new(&masking_key.into(), &masking_iv.into())
     }
 
-    fn advance(&mut self) {
-        self.token = match self.token {
-            Some(HeaderToken::ProtocolId) => Some(HeaderToken::Version),
-            Some(HeaderToken::Version) => Some(HeaderToken::Flag),
-            Some(HeaderToken::Flag) => Some(HeaderToken::Nonce),
-            Some(HeaderToken::Nonce) => Some(HeaderToken::AuthData),
-            _ => None,
-        };
-    }
-
-    fn halt(&mut self) {
-        self.token = None;
-    }
-
     pub fn new(
         buffer: &'dec mut BytesMut,
         masking_key: &'dec [u8; 16],
@@ -65,7 +59,7 @@ impl<'dec> Decoder<'dec> {
     ) -> Self {
         Self {
             buffer,
-            token: Some(HeaderToken::ProtocolId),
+            token_iter: Box::new(HEADER_TOKENS.iter()),
             cipher: Self::new_cipher(masking_key, masking_iv),
         }
     }
@@ -112,9 +106,9 @@ impl<'dec> Decoder<'dec> {
         authdata_bytes.freeze()
     }
 
-    fn extract_next(&mut self) -> Option<Result<HeaderField, DecoderError>> {
-        match &self.token {
-            Some(HeaderToken::ProtocolId) => {
+    fn extract(&mut self, token: &HeaderToken) -> Option<Result<HeaderField, DecoderError>> {
+        match token {
+            HeaderToken::ProtocolId => {
                 if self.buffer.len() < HEADER_PROTOCOL_ID_SIZE {
                     return Some(Err(DecoderError::InsufficientBytes("protocol-id")));
                 }
@@ -122,7 +116,7 @@ impl<'dec> Decoder<'dec> {
                 let protocol_id = self.unmask_and_extract_protocol_id();
                 Some(Ok(HeaderField::ProtocolId(protocol_id)))
             }
-            Some(HeaderToken::Version) => {
+            HeaderToken::Version => {
                 if self.buffer.len() < HEADER_VERSION_SIZE {
                     return Some(Err(DecoderError::InsufficientBytes("version")));
                 }
@@ -130,7 +124,7 @@ impl<'dec> Decoder<'dec> {
                 let version = self.unmask_and_extract_version();
                 Some(Ok(HeaderField::Version(version)))
             }
-            Some(HeaderToken::Flag) => {
+            HeaderToken::Flag => {
                 if self.buffer.len() < HEADER_FLAG_SIZE {
                     return Some(Err(DecoderError::InsufficientBytes("flag")));
                 }
@@ -138,7 +132,7 @@ impl<'dec> Decoder<'dec> {
                 let flag = self.unmask_and_extract_flag();
                 Some(Ok(HeaderField::Flag(flag)))
             }
-            Some(HeaderToken::Nonce) => {
+            HeaderToken::Nonce => {
                 if self.buffer.len() < HEADER_NONCE_SIZE {
                     return Some(Err(DecoderError::InsufficientBytes("nonce")));
                 }
@@ -146,7 +140,7 @@ impl<'dec> Decoder<'dec> {
                 let nonce = self.unmask_and_extract_nonce();
                 Some(Ok(HeaderField::Nonce(nonce)))
             }
-            Some(HeaderToken::AuthData) => {
+            HeaderToken::AuthData => {
                 if self.buffer.len() < HEADER_AUTHSIZE_SIZE {
                     return Some(Err(DecoderError::InsufficientBytes("authsize")));
                 }
@@ -160,7 +154,6 @@ impl<'dec> Decoder<'dec> {
                 let authdata = self.unmask_and_extract_authdata(authsize);
                 Some(Ok(HeaderField::AuthData(authdata)))
             }
-            _ => None,
         }
     }
 }
@@ -169,17 +162,7 @@ impl<'dec> Iterator for Decoder<'dec> {
     type Item = Result<HeaderField, DecoderError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let header_field = self.extract_next();
-
-        if let Some(res) = &header_field {
-            if res.is_ok() {
-                self.advance();
-            } else {
-                self.halt();
-            }
-        }
-
-        header_field
+        self.token_iter.next().and_then(|token| self.extract(token))
     }
 }
 
