@@ -106,53 +106,53 @@ impl<'dec> Decoder<'dec> {
         authdata_bytes.freeze()
     }
 
-    fn extract(&mut self, token: &HeaderToken) -> Option<Result<HeaderField, DecoderError>> {
+    fn extract(&mut self, token: &HeaderToken) -> Result<HeaderField, DecoderError> {
         match token {
             HeaderToken::ProtocolId => {
                 if self.buffer.len() < HEADER_PROTOCOL_ID_SIZE {
-                    return Some(Err(DecoderError::InsufficientBytes("protocol-id")));
+                    return Err(DecoderError::InsufficientBytes("protocol-id"));
                 }
 
                 let protocol_id = self.unmask_and_extract_protocol_id();
-                Some(Ok(HeaderField::ProtocolId(protocol_id)))
+                Ok(HeaderField::ProtocolId(protocol_id))
             }
             HeaderToken::Version => {
                 if self.buffer.len() < HEADER_VERSION_SIZE {
-                    return Some(Err(DecoderError::InsufficientBytes("version")));
+                    return Err(DecoderError::InsufficientBytes("version"));
                 }
 
                 let version = self.unmask_and_extract_version();
-                Some(Ok(HeaderField::Version(version)))
+                Ok(HeaderField::Version(version))
             }
             HeaderToken::Flag => {
                 if self.buffer.len() < HEADER_FLAG_SIZE {
-                    return Some(Err(DecoderError::InsufficientBytes("flag")));
+                    return Err(DecoderError::InsufficientBytes("flag"));
                 }
 
                 let flag = self.unmask_and_extract_flag();
-                Some(Ok(HeaderField::Flag(flag)))
+                Ok(HeaderField::Flag(flag))
             }
             HeaderToken::Nonce => {
                 if self.buffer.len() < HEADER_NONCE_SIZE {
-                    return Some(Err(DecoderError::InsufficientBytes("nonce")));
+                    return Err(DecoderError::InsufficientBytes("nonce"));
                 }
 
                 let nonce = self.unmask_and_extract_nonce();
-                Some(Ok(HeaderField::Nonce(nonce)))
+                Ok(HeaderField::Nonce(nonce))
             }
             HeaderToken::AuthData => {
                 if self.buffer.len() < HEADER_AUTHSIZE_SIZE {
-                    return Some(Err(DecoderError::InsufficientBytes("authsize")));
+                    return Err(DecoderError::InsufficientBytes("authsize"));
                 }
 
                 let authsize = self.unmask_and_extract_authsize();
 
                 if self.buffer.len() < authsize {
-                    return Some(Err(DecoderError::InsufficientBytes("authdata")));
+                    return Err(DecoderError::InsufficientBytes("authdata"));
                 }
 
                 let authdata = self.unmask_and_extract_authdata(authsize);
-                Some(Ok(HeaderField::AuthData(authdata)))
+                Ok(HeaderField::AuthData(authdata))
             }
         }
     }
@@ -162,7 +162,7 @@ impl<'dec> Iterator for Decoder<'dec> {
     type Item = Result<HeaderField, DecoderError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.token_iter.next().and_then(|token| self.extract(token))
+        self.token_iter.next().map(|token| self.extract(token))
     }
 }
 
