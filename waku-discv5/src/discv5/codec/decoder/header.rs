@@ -41,8 +41,12 @@ static HEADER_TOKENS: &[HeaderToken] = &[
 
 pub struct Decoder<'dec> {
     buffer: &'dec mut BytesMut,
-    token_iter: Box<dyn Iterator<Item=&'static HeaderToken>>,
     cipher: Aes128Ctr,
+}
+
+pub struct DecoderIterator<'dec> {
+    iter: Box<dyn Iterator<Item=Result<HeaderField, DecoderError>> + 'dec>,
+    errored: bool,
 }
 
 impl<'dec> Decoder<'dec> {
@@ -51,7 +55,6 @@ impl<'dec> Decoder<'dec> {
         let masking_iv: GenericArray<u8, U16> = GenericArray::clone_from_slice(masking_iv);
         Aes128Ctr::new(&masking_key.into(), &masking_iv.into())
     }
-
     pub fn new(
         buffer: &'dec mut BytesMut,
         masking_key: &'dec [u8; 16],
@@ -59,7 +62,6 @@ impl<'dec> Decoder<'dec> {
     ) -> Self {
         Self {
             buffer,
-            token_iter: Box::new(HEADER_TOKENS.iter()),
             cipher: Self::new_cipher(masking_key, masking_iv),
         }
     }
@@ -158,11 +160,28 @@ impl<'dec> Decoder<'dec> {
     }
 }
 
-impl<'dec> Iterator for Decoder<'dec> {
+impl<'dec> IntoIterator for &'dec mut Decoder<'dec> {
+    type Item = Result<HeaderField, DecoderError>;
+    type IntoIter = DecoderIterator<'dec>;
+
+    fn into_iter(mut self) -> Self::IntoIter {
+        let iter = Box::new(HEADER_TOKENS.iter().map(move |token| self.extract(token)));
+        Self::IntoIter { iter }
+    }
+}
+
+impl<'dec> Iterator for DecoderIterator<'dec> {
     type Item = Result<HeaderField, DecoderError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.token_iter.next().map(|token| self.extract(token))
+        match self.next() {
+            Some(Ok(field)) => Some(Ok(field)),
+            Some(Err(err)) => {
+                self.errored = true;
+                Some(Err(err))
+            }
+            None => None,
+        }
     }
 }
 
@@ -194,6 +213,8 @@ mod tests {
 
         //// When
         let mut decoder = Decoder::new(&mut buffer, &MASKING_KEY, &MASKING_IV);
+
+        let mut it = decoder.into_iter();
 
         let protocol_id = decoder.next();
         let version = decoder.next();
