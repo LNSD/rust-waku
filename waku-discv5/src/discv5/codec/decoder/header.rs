@@ -166,7 +166,7 @@ impl<'dec> IntoIterator for &'dec mut Decoder<'dec> {
 
     fn into_iter(mut self) -> Self::IntoIter {
         let iter = Box::new(HEADER_TOKENS.iter().map(move |token| self.extract(token)));
-        Self::IntoIter { iter }
+        Self::IntoIter { iter, errored: false }
     }
 }
 
@@ -210,38 +210,40 @@ mod tests {
         );
 
         let mut buffer = BytesMut::from(&PACKET_RAW[..]);
+        {
+            //// When
+            let mut decoder = Decoder::new(&mut buffer, &MASKING_KEY, &MASKING_IV);
 
-        //// When
-        let mut decoder = Decoder::new(&mut buffer, &MASKING_KEY, &MASKING_IV);
+            let mut it = decoder.into_iter();
 
-        let mut it = decoder.into_iter();
+            let protocol_id = it.next();
+            let version = it.next();
+            let flag = it.next();
+            let nonce = it.next();
+            let authdata = it.next();
 
-        let protocol_id = decoder.next();
-        let version = decoder.next();
-        let flag = decoder.next();
-        let nonce = decoder.next();
-        let authdata = decoder.next();
+            let no_field = it.next();
 
-        let no_field = decoder.next();
-
-        //// Then
-        assert_matches!(protocol_id, Some(Ok(HeaderField::ProtocolId(value))) => {
+            //// Then
+            assert_matches!(protocol_id, Some(Ok(HeaderField::ProtocolId(value))) => {
            assert_eq!(value, Bytes::from_static(b"discv5"))
         });
-        assert_matches!(version, Some(Ok(HeaderField::Version(value))) => {
+            assert_matches!(version, Some(Ok(HeaderField::Version(value))) => {
             assert_eq!(value, 0x0001)
         });
-        assert_matches!(flag, Some(Ok(HeaderField::Flag(value))) => {
+            assert_matches!(flag, Some(Ok(HeaderField::Flag(value))) => {
             assert_eq!(value, 2)
         });
-        assert_matches!(nonce, Some(Ok(HeaderField::Nonce(value))) => {
+            assert_matches!(nonce, Some(Ok(HeaderField::Nonce(value))) => {
             assert_eq!(value, Bytes::copy_from_slice(&[0xff; 12]))
         });
-        assert_matches!(authdata, Some(Ok(HeaderField::AuthData(value))) => {
+            assert_matches!(authdata, Some(Ok(HeaderField::AuthData(value))) => {
             assert_eq!(value.len(), 131)
         });
 
-        assert!(no_field.is_none());
+            assert!(no_field.is_none());
+        }
+
         assert!(buffer.len() > 0);
     }
 
@@ -258,30 +260,33 @@ mod tests {
         );
 
         let mut buffer = BytesMut::from(&PACKET_RAW[..]);
+        {
+            //// When
+            let mut decoder = Decoder::new(&mut buffer, &MASKING_KEY, &MASKING_IV);
+            let mut it = decoder.into_iter();
 
-        //// When
-        let mut decoder = Decoder::new(&mut buffer, &MASKING_KEY, &MASKING_IV);
+            let protocol_id = it.next();
+            let version = it.next();
+            let flag = it.next();
+            let nonce = it.next();
 
-        let protocol_id = decoder.next();
-        let version = decoder.next();
-        let flag = decoder.next();
-        let nonce = decoder.next();
+            let no_field = it.next();
 
-        let no_field = decoder.next();
-
-        //// Then
-        assert_matches!(protocol_id, Some(Ok(HeaderField::ProtocolId(value))) => {
+            //// Then
+            assert_matches!(protocol_id, Some(Ok(HeaderField::ProtocolId(value))) => {
            assert_eq!(value, Bytes::from_static(b"discv5"))
         });
-        assert_matches!(version, Some(Ok(HeaderField::Version(value))) => {
+            assert_matches!(version, Some(Ok(HeaderField::Version(value))) => {
             assert_eq!(value, 0x0001)
         });
-        assert_matches!(flag, Some(Ok(HeaderField::Flag(value))) => {
+            assert_matches!(flag, Some(Ok(HeaderField::Flag(value))) => {
             assert_eq!(value, 2)
         });
-        assert_matches!(nonce, Some(Err(DecoderError::InsufficientBytes("nonce"))));
+            assert_matches!(nonce, Some(Err(DecoderError::InsufficientBytes("nonce"))));
 
-        assert!(no_field.is_none());
+            assert!(no_field.is_none());
+        }
+
         assert_eq!(buffer.len(), 7);
     }
 
@@ -299,36 +304,41 @@ mod tests {
 
         let mut buffer = BytesMut::from(&PACKET_RAW[..]);
 
-        //// When
-        let mut decoder = Decoder::new(&mut buffer, &MASKING_KEY, &MASKING_IV);
+        {
+            //// When
+            let mut decoder = Decoder::new(&mut buffer, &MASKING_KEY, &MASKING_IV);
 
-        let protocol_id = decoder.next();
-        let version = decoder.next();
-        let flag = decoder.next();
-        let nonce = decoder.next();
-        let authdata = decoder.next();
+            let mut it = decoder.into_iter();
 
-        let no_field = decoder.next();
+            let protocol_id = it.next();
+            let version = it.next();
+            let flag = it.next();
+            let nonce = it.next();
+            let authdata = it.next();
 
-        //// Then
-        assert_matches!(protocol_id, Some(Ok(HeaderField::ProtocolId(value))) => {
+            let no_field = it.next();
+
+            //// Then
+            assert_matches!(protocol_id, Some(Ok(HeaderField::ProtocolId(value))) => {
            assert_eq!(value, Bytes::from_static(b"discv5"))
         });
-        assert_matches!(version, Some(Ok(HeaderField::Version(value))) => {
+            assert_matches!(version, Some(Ok(HeaderField::Version(value))) => {
             assert_eq!(value, 0x0001)
         });
-        assert_matches!(flag, Some(Ok(HeaderField::Flag(value))) => {
+            assert_matches!(flag, Some(Ok(HeaderField::Flag(value))) => {
             assert_eq!(value, 2)
         });
-        assert_matches!(nonce, Some(Ok(HeaderField::Nonce(value))) => {
+            assert_matches!(nonce, Some(Ok(HeaderField::Nonce(value))) => {
             assert_eq!(value, Bytes::copy_from_slice(&[0xff; 12]))
         });
-        assert_matches!(
+            assert_matches!(
             authdata,
             Some(Err(DecoderError::InsufficientBytes("authdata")))
         );
 
-        assert!(no_field.is_none());
+            assert!(no_field.is_none());
+        }
+
         assert!(buffer.len() > 0);
     }
 }
