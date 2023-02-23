@@ -1,21 +1,26 @@
+use std::iter::Fuse;
+
 use aes::cipher::{KeyIvInit, StreamCipher};
 use aes::cipher::consts::U16;
 use aes::cipher::generic_array::GenericArray;
 use bytes::{Buf, Bytes, BytesMut};
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
+use crate::common::iter::DrainableFusedIterator;
 use crate::discv5::codec::decoder::error::DecoderError;
 
 type Aes128Ctr = ctr::Ctr128BE<aes::Aes128>;
 
 /// Packet header field sizes
-const HEADER_PROTOCOL_ID_SIZE: usize = 6;
+const HEADER_PROTOCOLID_SIZE: usize = 6;
 const HEADER_VERSION_SIZE: usize = 2;
 const HEADER_FLAG_SIZE: usize = 1;
 const HEADER_NONCE_SIZE: usize = 12;
 const HEADER_AUTHSIZE_SIZE: usize = 2;
 
-#[derive(Debug)]
-enum HeaderToken {
+#[derive(Debug, EnumIter)]
+enum HeaderFieldToken {
     ProtocolId,
     Version,
     Flag,
@@ -33,9 +38,9 @@ pub enum HeaderField {
 }
 
 pub struct HeaderDecoder<'dec> {
-    buffer: &'dec mut BytesMut,
-    token: Option<HeaderToken>,
+    field_tokens: Fuse<HeaderFieldTokenIter>,
     cipher: Aes128Ctr,
+    buffer: &'dec mut BytesMut,
 }
 
 impl<'dec> HeaderDecoder<'dec> {
@@ -45,34 +50,20 @@ impl<'dec> HeaderDecoder<'dec> {
         Aes128Ctr::new(&masking_key.into(), &masking_iv.into())
     }
 
-    fn advance(&mut self) {
-        self.token = match self.token {
-            Some(HeaderToken::ProtocolId) => Some(HeaderToken::Version),
-            Some(HeaderToken::Version) => Some(HeaderToken::Flag),
-            Some(HeaderToken::Flag) => Some(HeaderToken::Nonce),
-            Some(HeaderToken::Nonce) => Some(HeaderToken::AuthData),
-            _ => None,
-        };
-    }
-
-    fn halt(&mut self) {
-        self.token = None;
-    }
-
     pub fn new(
         buffer: &'dec mut BytesMut,
         masking_key: &'dec [u8; 16],
         masking_iv: &'dec [u8; 16],
     ) -> Self {
         Self {
+            field_tokens: HeaderFieldToken::iter().fuse(),
             buffer,
-            token: Some(HeaderToken::ProtocolId),
             cipher: Self::new_cipher(masking_key, masking_iv),
         }
     }
 
     fn unmask_and_extract_protocol_id(&mut self) -> Bytes {
-        let mut protocol_id_bytes = self.buffer.split_to(HEADER_PROTOCOL_ID_SIZE);
+        let mut protocol_id_bytes = self.buffer.split_to(HEADER_PROTOCOLID_SIZE);
         self.cipher.apply_keystream(&mut protocol_id_bytes);
 
         protocol_id_bytes.freeze()
@@ -113,55 +104,54 @@ impl<'dec> HeaderDecoder<'dec> {
         authdata_bytes.freeze()
     }
 
-    fn extract_next(&mut self) -> Option<Result<HeaderField, DecoderError>> {
-        match &self.token {
-            Some(HeaderToken::ProtocolId) => {
-                if self.buffer.len() < HEADER_PROTOCOL_ID_SIZE {
-                    return Some(Err(DecoderError::InsufficientBytes("protocol-id")));
+    fn extract_next(&mut self, token: HeaderFieldToken) -> Result<HeaderField, DecoderError> {
+        match token {
+            HeaderFieldToken::ProtocolId => {
+                if self.buffer.len() < HEADER_PROTOCOLID_SIZE {
+                    return Err(DecoderError::InsufficientBytes("protocol-id"));
                 }
 
                 let protocol_id = self.unmask_and_extract_protocol_id();
-                Some(Ok(HeaderField::ProtocolId(protocol_id)))
+                Ok(HeaderField::ProtocolId(protocol_id))
             }
-            Some(HeaderToken::Version) => {
+            HeaderFieldToken::Version => {
                 if self.buffer.len() < HEADER_VERSION_SIZE {
-                    return Some(Err(DecoderError::InsufficientBytes("version")));
+                    return Err(DecoderError::InsufficientBytes("version"));
                 }
 
                 let version = self.unmask_and_extract_version();
-                Some(Ok(HeaderField::Version(version)))
+                Ok(HeaderField::Version(version))
             }
-            Some(HeaderToken::Flag) => {
+            HeaderFieldToken::Flag => {
                 if self.buffer.len() < HEADER_FLAG_SIZE {
-                    return Some(Err(DecoderError::InsufficientBytes("flag")));
+                    return Err(DecoderError::InsufficientBytes("flag"));
                 }
 
                 let flag = self.unmask_and_extract_flag();
-                Some(Ok(HeaderField::Flag(flag)))
+                Ok(HeaderField::Flag(flag))
             }
-            Some(HeaderToken::Nonce) => {
+            HeaderFieldToken::Nonce => {
                 if self.buffer.len() < HEADER_NONCE_SIZE {
-                    return Some(Err(DecoderError::InsufficientBytes("nonce")));
+                    return Err(DecoderError::InsufficientBytes("nonce"));
                 }
 
                 let nonce = self.unmask_and_extract_nonce();
-                Some(Ok(HeaderField::Nonce(nonce)))
+                Ok(HeaderField::Nonce(nonce))
             }
-            Some(HeaderToken::AuthData) => {
+            HeaderFieldToken::AuthData => {
                 if self.buffer.len() < HEADER_AUTHSIZE_SIZE {
-                    return Some(Err(DecoderError::InsufficientBytes("authsize")));
+                    return Err(DecoderError::InsufficientBytes("authsize"));
                 }
 
                 let authsize = self.unmask_and_extract_authsize();
 
                 if self.buffer.len() < authsize {
-                    return Some(Err(DecoderError::InsufficientBytes("authdata")));
+                    return Err(DecoderError::InsufficientBytes("authdata"));
                 }
 
                 let authdata = self.unmask_and_extract_authdata(authsize);
-                Some(Ok(HeaderField::AuthData(authdata)))
+                Ok(HeaderField::AuthData(authdata))
             }
-            _ => None,
         }
     }
 }
@@ -170,17 +160,14 @@ impl<'dec> Iterator for HeaderDecoder<'dec> {
     type Item = Result<HeaderField, DecoderError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let header_field = self.extract_next();
+        let next_field = self.field_tokens.next()?;
+        let field = self.extract_next(next_field);
 
-        if let Some(res) = &header_field {
-            if res.is_ok() {
-                self.advance();
-            } else {
-                self.halt();
-            }
+        if field.is_err() {
+            self.field_tokens.drain();
         }
 
-        header_field
+        Some(field)
     }
 }
 
@@ -264,7 +251,10 @@ mod tests {
         let flag = decoder.next();
         let nonce = decoder.next();
 
-        let no_field = decoder.next();
+        // After the error no more fields should be returned
+        let no_field1 = decoder.next();
+        let no_field2 = decoder.next();
+        let no_field3 = decoder.next();
 
         //// Then
         assert_matches!(protocol_id, Some(Ok(HeaderField::ProtocolId(value))) => {
@@ -278,7 +268,10 @@ mod tests {
         });
         assert_matches!(nonce, Some(Err(DecoderError::InsufficientBytes("nonce"))));
 
-        assert!(no_field.is_none());
+        assert!(no_field1.is_none());
+        assert!(no_field2.is_none());
+        assert!(no_field3.is_none());
+
         assert_eq!(buffer.len(), 7);
     }
 
