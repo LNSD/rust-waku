@@ -14,6 +14,7 @@ const HEADER_FLAG_SIZE: usize = 1;
 const HEADER_NONCE_SIZE: usize = 12;
 const HEADER_AUTHSIZE_SIZE: usize = 2;
 
+#[derive(Debug)]
 enum HeaderToken {
     ProtocolId,
     Version,
@@ -25,19 +26,19 @@ enum HeaderToken {
 #[derive(Debug)]
 pub enum HeaderField {
     ProtocolId(Bytes),
-    Version(u16),
-    Flag(u8),
+    Version(Bytes),
+    Flag(Bytes),
     Nonce(Bytes),
     AuthData(Bytes),
 }
 
-pub struct Decoder<'dec> {
+pub struct HeaderDecoder<'dec> {
     buffer: &'dec mut BytesMut,
     token: Option<HeaderToken>,
     cipher: Aes128Ctr,
 }
 
-impl<'dec> Decoder<'dec> {
+impl<'dec> HeaderDecoder<'dec> {
     fn new_cipher(masking_key: &'dec [u8; 16], masking_iv: &'dec [u8; 16]) -> Aes128Ctr {
         let masking_key: GenericArray<u8, U16> = GenericArray::clone_from_slice(masking_key);
         let masking_iv: GenericArray<u8, U16> = GenericArray::clone_from_slice(masking_iv);
@@ -77,18 +78,18 @@ impl<'dec> Decoder<'dec> {
         protocol_id_bytes.freeze()
     }
 
-    fn unmask_and_extract_version(&mut self) -> u16 {
+    fn unmask_and_extract_version(&mut self) -> Bytes {
         let mut version_bytes = self.buffer.split_to(HEADER_VERSION_SIZE);
         self.cipher.apply_keystream(&mut version_bytes);
 
-        version_bytes.get_u16()
+        version_bytes.freeze()
     }
 
-    fn unmask_and_extract_flag(&mut self) -> u8 {
+    fn unmask_and_extract_flag(&mut self) -> Bytes {
         let mut flag_bytes = self.buffer.split_to(HEADER_FLAG_SIZE);
         self.cipher.apply_keystream(&mut flag_bytes);
 
-        flag_bytes.get_u8()
+        flag_bytes.freeze()
     }
 
     fn unmask_and_extract_nonce(&mut self) -> Bytes {
@@ -165,7 +166,7 @@ impl<'dec> Decoder<'dec> {
     }
 }
 
-impl<'dec> Iterator for Decoder<'dec> {
+impl<'dec> Iterator for HeaderDecoder<'dec> {
     type Item = Result<HeaderField, DecoderError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -189,7 +190,7 @@ mod tests {
     use bytes::{Bytes, BytesMut};
     use hex_literal::hex;
 
-    use super::{Decoder, DecoderError, HeaderField};
+    use super::{DecoderError, HeaderDecoder, HeaderField};
 
     #[test]
     fn test_valid_header() {
@@ -210,7 +211,7 @@ mod tests {
         let mut buffer = BytesMut::from(&PACKET_RAW[..]);
 
         //// When
-        let mut decoder = Decoder::new(&mut buffer, &MASKING_KEY, &MASKING_IV);
+        let mut decoder = HeaderDecoder::new(&mut buffer, &MASKING_KEY, &MASKING_IV);
 
         let protocol_id = decoder.next();
         let version = decoder.next();
@@ -225,13 +226,13 @@ mod tests {
            assert_eq!(value, Bytes::from_static(b"discv5"))
         });
         assert_matches!(version, Some(Ok(HeaderField::Version(value))) => {
-            assert_eq!(value, 0x0001)
+            assert_eq!(*value, hex!("0001"));
         });
         assert_matches!(flag, Some(Ok(HeaderField::Flag(value))) => {
-            assert_eq!(value, 2)
+            assert_eq!(*value, hex!("02"))
         });
         assert_matches!(nonce, Some(Ok(HeaderField::Nonce(value))) => {
-            assert_eq!(value, Bytes::copy_from_slice(&[0xff; 12]))
+            assert_eq!(*value, hex!("ffffffffffffffffffffffff"));
         });
         assert_matches!(authdata, Some(Ok(HeaderField::AuthData(value))) => {
             assert_eq!(value.len(), 131)
@@ -256,7 +257,7 @@ mod tests {
         let mut buffer = BytesMut::from(&PACKET_RAW[..]);
 
         //// When
-        let mut decoder = Decoder::new(&mut buffer, &MASKING_KEY, &MASKING_IV);
+        let mut decoder = HeaderDecoder::new(&mut buffer, &MASKING_KEY, &MASKING_IV);
 
         let protocol_id = decoder.next();
         let version = decoder.next();
@@ -270,10 +271,10 @@ mod tests {
            assert_eq!(value, Bytes::from_static(b"discv5"))
         });
         assert_matches!(version, Some(Ok(HeaderField::Version(value))) => {
-            assert_eq!(value, 0x0001)
+            assert_eq!(*value, hex!("0001"));
         });
         assert_matches!(flag, Some(Ok(HeaderField::Flag(value))) => {
-            assert_eq!(value, 2)
+            assert_eq!(*value, hex!("02"))
         });
         assert_matches!(nonce, Some(Err(DecoderError::InsufficientBytes("nonce"))));
 
@@ -296,7 +297,7 @@ mod tests {
         let mut buffer = BytesMut::from(&PACKET_RAW[..]);
 
         //// When
-        let mut decoder = Decoder::new(&mut buffer, &MASKING_KEY, &MASKING_IV);
+        let mut decoder = HeaderDecoder::new(&mut buffer, &MASKING_KEY, &MASKING_IV);
 
         let protocol_id = decoder.next();
         let version = decoder.next();
@@ -311,13 +312,13 @@ mod tests {
            assert_eq!(value, Bytes::from_static(b"discv5"))
         });
         assert_matches!(version, Some(Ok(HeaderField::Version(value))) => {
-            assert_eq!(value, 0x0001)
+            assert_eq!(*value, hex!("0001"));
         });
         assert_matches!(flag, Some(Ok(HeaderField::Flag(value))) => {
-            assert_eq!(value, 2)
+            assert_eq!(*value, hex!("02"))
         });
         assert_matches!(nonce, Some(Ok(HeaderField::Nonce(value))) => {
-            assert_eq!(value, Bytes::copy_from_slice(&[0xff; 12]))
+            assert_eq!(*value, hex!("ffffffffffffffffffffffff"));
         });
         assert_matches!(
             authdata,
