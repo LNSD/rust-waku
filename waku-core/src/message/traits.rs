@@ -6,21 +6,21 @@ impl From<WakuMessageProto> for WakuMessage {
         Self {
             payload: proto.payload,
             content_topic: proto.content_topic.into(),
-            version: proto.version.unwrap_or(0),
-            timestamp: proto.timestamp,
+            meta: proto.meta,
             ephemeral: proto.ephemeral.unwrap_or(false),
         }
     }
 }
 
-impl Into<WakuMessageProto> for WakuMessage {
-    fn into(self) -> WakuMessageProto {
+impl From<WakuMessage> for WakuMessageProto {
+    fn from(message: WakuMessage) -> Self {
         WakuMessageProto {
-            payload: self.payload.clone(),
-            content_topic: self.content_topic.into(),
-            version: Some(self.version),
-            timestamp: self.timestamp,
-            ephemeral: Some(self.ephemeral),
+            payload: message.payload,
+            content_topic: message.content_topic.to_string(),
+            version: None,   // Deprecated
+            timestamp: None, // Deprecated
+            meta: message.meta,
+            ephemeral: Some(message.ephemeral),
         }
     }
 }

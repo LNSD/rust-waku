@@ -8,23 +8,23 @@ use crate::content_topic::ContentTopic;
 pub struct WakuMessage {
     pub payload: Bytes,
     pub content_topic: ContentTopic,
-    pub version: u32,
-    pub timestamp: Option<i64>,
+    pub meta: Option<Bytes>,
     pub ephemeral: bool,
 }
 
 impl Debug for WakuMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let payload_slice = self.payload.get(0..32).unwrap_or(&self.payload[..]);
+        let payload_fmt = match self.payload.get(0..32) {
+            Some(slice) => format!("{}…", hex::encode(slice)),
+            None => hex::encode(&self.payload[..]),
+        };
+        let meta_fmt = &self.meta.clone().map_or("[]".to_string(), hex::encode);
+
         f.debug_struct("WakuMessage")
             .field("content_topic", &self.content_topic)
-            .field("version", &self.version)
-            .field("timestamp", &self.timestamp)
+            .field("meta", &meta_fmt)
+            .field("payload", &payload_fmt)
             .field("ephemeral", &self.ephemeral)
-            .field(
-                "payload",
-                &format_args!("Bytes(0x{}…)", hex::encode(payload_slice)),
-            )
             .finish()
     }
 }

@@ -1,13 +1,13 @@
 use std::env;
 use std::error::Error;
-use std::process::{exit, Command};
+use std::process::{Command, exit};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let out_dir = env::var_os("OUT_DIR").unwrap();
 
     let status = Command::new("buf")
         .arg("generate")
-        .arg("https://github.com/vacp2p/waku.git#ref=6a89c52")
+        .arg("https://github.com/vacp2p/waku.git#ref=25e8922")
         .arg("--path")
         .arg("waku/message")
         .arg("--output")

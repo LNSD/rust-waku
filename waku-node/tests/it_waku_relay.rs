@@ -66,8 +66,7 @@ async fn it_publish_and_subscribe() {
     let message = WakuMessage {
         payload: Bytes::from_static(b"TEST"),
         content_topic: "/test/v1/it/text".parse().unwrap(),
-        version: 0,
-        timestamp: None,
+        meta: None,
         ephemeral: false,
     };
 
