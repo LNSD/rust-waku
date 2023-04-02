@@ -2,13 +2,14 @@ use libp2p::{Multiaddr, PeerId};
 use log::debug;
 use tokio::sync::{mpsc, oneshot};
 
-use waku_message::{PubsubTopic, WakuMessage};
+use waku_core::message::WakuMessage;
+use waku_core::pubsub_topic::PubsubTopic;
 
 use crate::behaviour::Behaviour;
 use crate::behaviour::Config as BehaviourConfig;
 use crate::event_loop::{Command, Event, EventLoop};
-use crate::transport::{default_transport, BoxedP2PTransport};
 use crate::NodeConfig;
+use crate::transport::{BoxedP2PTransport, default_transport};
 
 pub struct Node {
     pub config: NodeConfig,

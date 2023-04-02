@@ -5,12 +5,13 @@ use libp2p::gossipsub::{
     Gossipsub, GossipsubConfigBuilder, GossipsubMessage, GossipsubVersion, IdentTopic,
     MessageAuthenticity, MessageId, ValidationMode,
 };
-use libp2p::swarm::NetworkBehaviour;
 use libp2p::PeerId;
+use libp2p::swarm::NetworkBehaviour;
 use prost::Message;
 
-use waku_message::proto::waku::message::v1::WakuMessage as WakuMessageProto;
-use waku_message::{PubsubTopic, WakuMessage};
+use waku_core::message::WakuMessage;
+use waku_core::proto::waku::message::v1::WakuMessage as WakuMessageProto;
+use waku_core::pubsub_topic::PubsubTopic;
 
 use crate::error::{PublishError, SubscriptionError};
 use crate::event::Event;

@@ -11,4 +11,4 @@ libp2p = { version = "0.51.0", features = ["gossipsub", "macros"] }
 prost = "0.11.6"
 strum_macros = "0.24.3"
 thiserror = "1.0.38"
-waku-message = { version = "0.1.0", path = "../waku-message" }
+waku-core = { version = "0.1.0", path = "../waku-core" }

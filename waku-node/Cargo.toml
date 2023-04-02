@@ -18,5 +18,5 @@ strum_macros = "0.24.3"
 thiserror = "1.0.38"
 tokio = { version = "1.25.0", features = ["sync", "rt", "macros"] }
 void = "1.0.2"
-waku-message = { version = "0.1.0", path = "../waku-message" }
+waku-core = { version = "0.1.0", path = "../waku-core" }
 waku-relay = { version = "0.1.0", path = "../waku-relay" }

@@ -4,8 +4,9 @@ use bytes::Bytes;
 use libp2p::Multiaddr;
 use tokio::time::sleep;
 
-use waku_message::{PubsubTopic, WakuMessage};
-use waku_node::{memory_transport, Event, Node, NodeConfigBuilder};
+use waku_core::message::WakuMessage;
+use waku_core::pubsub_topic::PubsubTopic;
+use waku_node::{Event, memory_transport, Node, NodeConfigBuilder};
 
 fn new_node(key: &str) -> Node {
     let mut key_raw = hex::decode(key).expect("key to be valid");

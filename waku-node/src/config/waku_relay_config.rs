@@ -1,6 +1,6 @@
 use libp2p::PeerId;
 
-use waku_message::PubsubTopic;
+use waku_core::pubsub_topic::PubsubTopic;
 
 #[derive(Debug, Clone, Default)]
 pub struct WakuRelayConfig {

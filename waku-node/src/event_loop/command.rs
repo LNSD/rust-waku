@@ -2,7 +2,8 @@ use libp2p::Multiaddr;
 use strum_macros::Display;
 use tokio::sync::oneshot;
 
-use waku_message::{PubsubTopic, WakuMessage};
+use waku_core::message::WakuMessage;
+use waku_core::pubsub_topic::PubsubTopic;
 
 #[derive(Debug, Display)]
 pub enum Command {
