@@ -1,5 +1,4 @@
-use libp2p::gossipsub::GossipsubEvent;
-use libp2p::PeerId;
+use libp2p::{gossipsub, PeerId};
 use prost::Message;
 use strum_macros::Display;
 
@@ -28,18 +27,18 @@ pub enum Event {
     },
 }
 
-impl From<GossipsubEvent> for Event {
-    fn from(event: GossipsubEvent) -> Self {
+impl From<gossipsub::Event> for Event {
+    fn from(event: gossipsub::Event) -> Self {
         match event {
-            GossipsubEvent::Subscribed { peer_id, topic } => Self::Subscribed {
+            gossipsub::Event::Subscribed { peer_id, topic } => Self::Subscribed {
                 peer_id,
                 pubsub_topic: PubsubTopic::new(topic.into_string()),
             },
-            GossipsubEvent::Unsubscribed { peer_id, topic } => Self::Unsubscribed {
+            gossipsub::Event::Unsubscribed { peer_id, topic } => Self::Unsubscribed {
                 peer_id,
                 pubsub_topic: PubsubTopic::new(topic.into_string()),
             },
-            GossipsubEvent::Message { message, .. } => {
+            gossipsub::Event::Message { message, .. } => {
                 if message.data.len() > MAX_WAKU_MESSAGE_SIZE {
                     return Self::InvalidMessage;
                 }
@@ -55,7 +54,7 @@ impl From<GossipsubEvent> for Event {
                     message: waku_message,
                 }
             }
-            GossipsubEvent::GossipsubNotSupported { peer_id } => {
+            gossipsub::Event::GossipsubNotSupported { peer_id } => {
                 Self::WakuRelayNotSupported { peer_id }
             }
         }

@@ -1,6 +1,6 @@
 use std::net::IpAddr;
 
-use libp2p::identity::{secp256k1, Keypair};
+use libp2p::identity::{Keypair, secp256k1};
 use libp2p::Multiaddr;
 
 use crate::config::waku_relay_config::WakuRelayConfig;
@@ -58,7 +58,7 @@ impl NodeConfigBuilder {
         let keypair = {
             let mut key_raw = bytes.as_mut();
             let secret_key = secp256k1::SecretKey::from_bytes(&mut key_raw)?;
-            Keypair::Secp256k1(secp256k1::Keypair::from(secret_key))
+            secp256k1::Keypair::from(secret_key).into()
         };
 
         self.config.keypair = keypair;

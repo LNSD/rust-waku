@@ -1,4 +1,5 @@
 use libp2p::{Multiaddr, PeerId};
+use libp2p::swarm::SwarmBuilder;
 use log::debug;
 use tokio::sync::{mpsc, oneshot};
 
@@ -31,7 +32,7 @@ impl Node {
                 keep_alive: config.keepalive.then_some(config.keepalive),
                 relay: config.relay.clone(),
             });
-            libp2p::Swarm::with_tokio_executor(transport, behaviour, peer_id)
+            SwarmBuilder::with_tokio_executor(transport, behaviour, peer_id).build()
         };
 
         let (command_sender, command_receiver) = mpsc::channel(32);

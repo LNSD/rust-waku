@@ -1,7 +1,6 @@
 //! Error types that can result from Waku relay.
 
-use libp2p::gossipsub::error::PublishError as GossipsubPublishError;
-use libp2p::gossipsub::error::SubscriptionError as GossipsubSubscriptionError;
+use libp2p::gossipsub;
 
 use crate::error::PublishError::{Duplicate, GossipsubError, InsufficientPeers, MessageTooLarge};
 use crate::error::SubscriptionError::NotAllowed;
@@ -21,15 +20,15 @@ pub enum PublishError {
     MessageTooLarge,
     /// Unknown Waku relay publish error.
     #[error("unknown gossipsub publish error")]
-    GossipsubError(GossipsubPublishError),
+    GossipsubError(gossipsub::PublishError),
 }
 
-impl From<GossipsubPublishError> for PublishError {
-    fn from(err: GossipsubPublishError) -> Self {
+impl From<gossipsub::PublishError> for PublishError {
+    fn from(err: gossipsub::PublishError) -> Self {
         match err {
-            GossipsubPublishError::Duplicate => Duplicate,
-            GossipsubPublishError::InsufficientPeers => InsufficientPeers,
-            GossipsubPublishError::MessageTooLarge => MessageTooLarge,
+            gossipsub::PublishError::Duplicate => Duplicate,
+            gossipsub::PublishError::InsufficientPeers => InsufficientPeers,
+            gossipsub::PublishError::MessageTooLarge => MessageTooLarge,
             _ => GossipsubError(err),
         }
     }
@@ -46,13 +45,13 @@ pub enum SubscriptionError {
     NotAllowed,
 }
 
-impl From<GossipsubSubscriptionError> for SubscriptionError {
-    fn from(err: GossipsubSubscriptionError) -> Self {
+impl From<gossipsub::SubscriptionError> for SubscriptionError {
+    fn from(err: gossipsub::SubscriptionError) -> Self {
         match err {
-            GossipsubSubscriptionError::PublishError(e) => {
+            gossipsub::SubscriptionError::PublishError(e) => {
                 SubscriptionError::PublishError(e.into())
             }
-            GossipsubSubscriptionError::NotAllowed => NotAllowed,
+            gossipsub::SubscriptionError::NotAllowed => NotAllowed,
         }
     }
 }
