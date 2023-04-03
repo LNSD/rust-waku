@@ -8,5 +8,5 @@ bytes = "1.4.0"
 libp2p = { workspace = true, features = ["gossipsub", "macros"] }
 prost = "0.11.6"
 strum_macros = "0.24.3"
-thiserror = "1.0.38"
+thiserror = { workspace = true }
 waku-core = { version = "0.1.0", path = "../waku-core" }

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.69"
+anyhow = { workspace = true }
 bytes = "1.4.0"
 clap = { version = "4.1.6", features = ["derive"] }
 futures = "0.3.26"
@@ -13,7 +13,7 @@ libp2p = { workspace = true, features = ["yamux", "mplex", "tcp", "tokio", "iden
 log = "0.4.17"
 pretty_env_logger = "0.4.0"
 strum_macros = "0.24.3"
-thiserror = "1.0.38"
+thiserror = { workspace = true }
 tokio = { version = "1.25.0", features = ["sync", "rt", "macros"] }
 void = "1.0.2"
 waku-core = { version = "0.1.0", path = "../waku-core" }
