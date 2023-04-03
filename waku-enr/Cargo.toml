@@ -12,4 +12,4 @@ enr = { version = "0.8.0", features = ["ed25519", "k256"] }
 multiaddr = { version = "0.17.1", default-features = false }
 
 [dev-dependencies]
-base64 = "0.20.0"
+base64 = "0.21.0"
