@@ -1,5 +1,5 @@
+use crate::message::proto::waku::message::v1::WakuMessage as WakuMessageProto;
 use crate::message::WakuMessage;
-use crate::proto::waku::message::v1::WakuMessage as WakuMessageProto;
 
 impl From<WakuMessageProto> for WakuMessage {
     fn from(proto: WakuMessageProto) -> Self {

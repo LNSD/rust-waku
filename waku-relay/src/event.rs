@@ -3,8 +3,8 @@ use prost::Message;
 use strum_macros::Display;
 
 use waku_core::message::MAX_WAKU_MESSAGE_SIZE;
+use waku_core::message::proto::waku::message::v1::WakuMessage as WakuMessageProto;
 use waku_core::message::WakuMessage;
-use waku_core::proto::waku::message::v1::WakuMessage as WakuMessageProto;
 use waku_core::pubsub_topic::PubsubTopic;
 
 #[derive(Debug, Display)]

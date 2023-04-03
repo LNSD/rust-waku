@@ -6,8 +6,8 @@ use libp2p::gossipsub::{IdentTopic, MessageAuthenticity, MessageId, ValidationMo
 use libp2p::swarm::NetworkBehaviour;
 use prost::Message;
 
+use waku_core::message::proto::waku::message::v1::WakuMessage as WakuMessageProto;
 use waku_core::message::WakuMessage;
-use waku_core::proto::waku::message::v1::WakuMessage as WakuMessageProto;
 use waku_core::pubsub_topic::PubsubTopic;
 
 use crate::error::{PublishError, SubscriptionError};
