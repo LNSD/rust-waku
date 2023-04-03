@@ -34,12 +34,12 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Protoc's Prost plugin
-        uses: baptiste0928/cargo-install@v1
+        uses: baptiste0928/cargo-install@v2
         with:
           crate: protoc-gen-prost
 
       - name: Install Protoc's Prost crate plugin
-        uses: baptiste0928/cargo-install@v1
+        uses: baptiste0928/cargo-install@v2
         with:
           crate: protoc-gen-prost-crate
 
