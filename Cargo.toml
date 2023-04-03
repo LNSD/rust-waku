@@ -5,3 +5,6 @@ members = [
     "waku-node",
     "waku-relay",
 ]
+
+[workspace.dependencies]
+libp2p = "0.51.2"

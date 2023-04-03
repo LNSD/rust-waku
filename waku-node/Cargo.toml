@@ -3,15 +3,13 @@ name = "waku-node"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 anyhow = "1.0.69"
 bytes = "1.4.0"
 clap = { version = "4.1.6", features = ["derive"] }
 futures = "0.3.26"
 hex = "0.4.3"
-libp2p = { version = "0.51.0", features = ["yamux", "mplex", "tcp", "tokio", "identify", "dns", "ping", "noise", "macros", "secp256k1"] }
+libp2p = { workspace = true, features = ["yamux", "mplex", "tcp", "tokio", "identify", "dns", "ping", "noise", "macros", "secp256k1"] }
 log = "0.4.17"
 pretty_env_logger = "0.4.0"
 strum_macros = "0.24.3"
