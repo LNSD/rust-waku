@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = { workspace = true }
 bytes = { workspace = true }
-clap = { version = "4.2.1", features = ["derive"] }
+clap = { version = "4.2.7", features = ["derive"] }
 futures = { workspace = true }
 hex = "0.4.3"
 libp2p = { workspace = true, features = ["yamux", "tcp", "tokio", "identify", "dns", "ping", "noise", "macros", "secp256k1"] }
