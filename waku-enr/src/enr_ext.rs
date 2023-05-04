@@ -53,7 +53,8 @@ impl<T: EnrKey> EnrBuilderExt for EnrBuilder<T> {
 
     /// Adds a Waku `waku2` capabilities bitfield to the EnrBuilder.
     fn waku2(&mut self, cap: WakuEnrCapabilities) -> &mut Self {
-        self.add_value(WAKU2_CAPABILITIES_ENR_KEY, &[cap.bits()]);
+        let cap = vec![cap.bits()];
+        self.add_value(WAKU2_CAPABILITIES_ENR_KEY, &cap);
         self
     }
 }
