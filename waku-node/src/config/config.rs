@@ -56,8 +56,7 @@ impl NodeConfigBuilder {
         // };
 
         let keypair = {
-            let mut key_raw = bytes.as_mut();
-            let secret_key = secp256k1::SecretKey::from_bytes(&mut key_raw)?;
+            let secret_key = secp256k1::SecretKey::try_from_bytes(bytes)?;
             secp256k1::Keypair::from(secret_key).into()
         };
 

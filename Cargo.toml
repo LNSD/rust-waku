@@ -10,6 +10,6 @@ members = [
 anyhow = "1.0.70"
 bytes = "1.4.0"
 futures = "0.3.28"
-libp2p = "0.51.2"
+libp2p = "0.51.3"
 thiserror = "1.0.40"
 tokio = "1.27.0"
