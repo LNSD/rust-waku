@@ -1,10 +1,10 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use multiaddr::Multiaddr;
 
-use waku_enr;
-use waku_enr::enr::{CombinedKey, Enr, EnrBuilder, EnrKey};
 use waku_enr::{EnrBuilderExt, EnrExt, WakuEnrCapabilities};
+use waku_enr::enr::{CombinedKey, Enr, EnrBuilder, EnrKey};
 
 ///! https://rfc.vac.dev/spec/31/#many-connection-types
 #[test]
@@ -24,7 +24,7 @@ fn test_build_waku_enr() {
 
     // Signing key
     let key_secp256k1_base64 = "MaZivCR1kZsI2/1MuSw9mhnLQYqETWwjfcWpyiS20uw=";
-    let mut key_secp256k1_bytes = base64::decode(key_secp256k1_base64).unwrap();
+    let mut key_secp256k1_bytes = STANDARD.decode(key_secp256k1_base64).unwrap();
     let key = CombinedKey::secp256k1_from_bytes(&mut key_secp256k1_bytes).unwrap();
 
     // When
@@ -63,7 +63,7 @@ fn test_decode_waku_enr() {
 
     // Signing key
     let key_secp256k1_base64 = "MaZivCR1kZsI2/1MuSw9mhnLQYqETWwjfcWpyiS20uw=";
-    let mut key_secp256k1_bytes = base64::decode(key_secp256k1_base64).unwrap();
+    let mut key_secp256k1_bytes = STANDARD.decode(key_secp256k1_base64).unwrap();
     let expected_key = CombinedKey::secp256k1_from_bytes(&mut key_secp256k1_bytes).unwrap();
 
     // ENR
