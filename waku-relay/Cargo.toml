@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 bytes = "1.4.0"
 libp2p = { workspace = true, features = ["gossipsub", "macros"] }
-prost = "0.11.8"
+prost = "0.11.9"
 strum_macros = "0.24.3"
 thiserror = { workspace = true }
 waku-core = { version = "0.1.0", path = "../waku-core" }
