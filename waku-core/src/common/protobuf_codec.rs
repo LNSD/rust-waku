@@ -40,9 +40,7 @@ impl<In: Message, Out> Encoder for Codec<In, Out> {
         let mut encoded_msg = BytesMut::new();
         item.encode(&mut encoded_msg)
             .expect("BytesMut to have sufficient capacity.");
-        self.uvi
-            .encode(encoded_msg.freeze(), dst)
-            .map_err(|e| e.into())
+        self.uvi.encode(encoded_msg.freeze(), dst)
     }
 }
 

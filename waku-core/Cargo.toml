@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = { workspace = true }
+assert_matches = "1.5.0"
 async-codec = "0.4.1"
 asynchronous-codec = "0.6.1"
 byte-unit = { version = "4.0.19", default-features = false, features = ["std"] }

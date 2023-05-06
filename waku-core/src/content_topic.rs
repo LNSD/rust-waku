@@ -55,9 +55,3 @@ impl From<String> for ContentTopic {
         Self(s)
     }
 }
-
-impl Into<String> for ContentTopic {
-    fn into(self) -> String {
-        self.0
-    }
-}
