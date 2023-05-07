@@ -49,11 +49,18 @@ jobs:
         with:
           crate: cargo-llvm-cov
 
+      - name: Install Cargo nextest
+        uses: baptiste0928/cargo-install@v2
+        with:
+          crate: cargo-nextest
+
       - name: Build
         run: cargo build
 
       - name: Test
-        run: cargo llvm-cov test --workspace --lcov --output-path ./lcov.info
+        run: cargo llvm-cov nextest --lcov --output-path lcov.info
 
       - name: Upload coverage report to codecov
         uses: codecov/codecov-action@v3
+        with:
+          files: lcov.info
