@@ -35,7 +35,10 @@ impl EventLoop {
                     None => { debug!("got empty command. terminating node event loop"); return },
                 },
                 event = self.switch.select_next_some() => match event {
-                    SwarmEvent::NewListenAddr { address, .. } => info!("switch listening on: {address:?}"),
+                    SwarmEvent::NewListenAddr { address, .. } => {
+                        // TODO: Send this event through the event_sink
+                        info!("switch listening on: {address:?}")
+                    },
                     SwarmEvent::Behaviour(behaviour::Event::WakuRelay(event)) => {
                         self.handle_waku_relay_event(event).await;
                     },

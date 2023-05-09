@@ -4,6 +4,7 @@ members = [
     "waku-enr",
     "waku-node",
     "waku-relay",
+    "apps/wakunode2",
 ]
 
 [workspace.dependencies]

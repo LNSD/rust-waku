@@ -3,4 +3,3 @@ pub use topic::*;
 
 mod namespaced;
 mod topic;
-
