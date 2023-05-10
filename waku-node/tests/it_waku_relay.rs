@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use bytes::Bytes;
+use libp2p::identity::secp256k1;
 use libp2p::Multiaddr;
 use tokio::time::sleep;
 
@@ -9,12 +10,15 @@ use waku_core::pubsub_topic::PubsubTopic;
 use waku_node::{Event, memory_transport, Node, NodeConfigBuilder};
 
 fn new_node(key: &str) -> Node {
-    let mut key_raw = hex::decode(key).expect("key to be valid");
+    let keypair = {
+        let raw_key = hex::decode(key).expect("key to be valid");
+        let secret_key = secp256k1::SecretKey::try_from_bytes(raw_key).unwrap();
+        secp256k1::Keypair::from(secret_key).into()
+    };
 
     let config = NodeConfigBuilder::new()
-        .keypair_from_secp256k1(&mut key_raw)
-        .unwrap()
-        .keepalive(true)
+        .keypair(keypair)
+        .with_keepalive(true)
         .with_waku_relay(Default::default())
         .build();
 

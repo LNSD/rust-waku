@@ -1,7 +1,5 @@
-### Vscode
+### IDEs and editors
 .vscode/
-
-### Jetbrains IDEs
 .idea/
 
 ### Rust and Cargo
@@ -21,5 +19,5 @@ Cargo.lock
 *.pdb
 
 ### Project specific
-# In-project generated files
-**/gen/**
+# Node configuration files
+config.toml

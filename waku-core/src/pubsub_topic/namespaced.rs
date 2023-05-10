@@ -26,7 +26,7 @@ fn parse_static_sharding(topic: &str) -> anyhow::Result<(u16, u16)> {
         .parse::<u16>()
         .map_err(|_| anyhow::anyhow!("invalid shard index"))?;
 
-    if let Some(_) = parts.next() {
+    if parts.next().is_some() {
         anyhow::bail!("too many parts");
     }
 
@@ -315,7 +315,13 @@ mod tests {
         let topic = NsPubsubTopic::try_from(ns_topic).unwrap();
 
         // Then
-        assert_matches!(topic, NsPubsubTopic::StaticSharding { cluster: 1, shard: 2 });
+        assert_matches!(
+            topic,
+            NsPubsubTopic::StaticSharding {
+                cluster: 1,
+                shard: 2
+            }
+        );
     }
 
     #[test]

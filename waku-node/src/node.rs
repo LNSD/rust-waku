@@ -13,7 +13,6 @@ use crate::NodeConfig;
 use crate::transport::{BoxedP2PTransport, default_transport};
 
 pub struct Node {
-    pub config: NodeConfig,
     peer_id: PeerId,
     command_sender: mpsc::Sender<Command>,
     event_receiver: mpsc::Receiver<Event>,
@@ -30,7 +29,8 @@ impl Node {
             let behaviour = Behaviour::new(BehaviourConfig {
                 local_public_key: config.keypair.public(),
                 keep_alive: config.keepalive.then_some(config.keepalive),
-                relay: config.relay.clone(),
+                ping: config.ping.then_some(config.ping),
+                relay: config.relay,
             });
             SwarmBuilder::with_tokio_executor(transport, behaviour, peer_id).build()
         };
@@ -43,7 +43,6 @@ impl Node {
         tokio::spawn(ev_loop.dispatch());
 
         Ok(Self {
-            config,
             peer_id,
             command_sender,
             event_receiver,
