@@ -1,11 +1,20 @@
+use clap::Parser;
 use log::{info, LevelFilter};
 
 mod app;
 mod config;
 
+#[derive(Debug, Clone, PartialEq, Eq, clap::Parser)]
+#[clap(author, version, about, long_about = None)]
+pub struct Cli {
+    #[arg(short = 'C', long, required = false, env = "WAKUNODE2_CONFIG_FILE")]
+    pub config_file: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let conf = config::load().unwrap();
+    let cli = Cli::parse();
+    let conf = config::load(cli.config_file).unwrap();
 
     pretty_env_logger::formatted_builder()
         .filter_level(LevelFilter::Info)

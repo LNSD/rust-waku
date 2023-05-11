@@ -3,7 +3,7 @@ use libp2p::Multiaddr;
 use log::{info, LevelFilter};
 
 use waku_core::pubsub_topic::PubsubTopic;
-use waku_node::{Node, WakuRelayConfigBuilder};
+use waku_node::Node;
 use waku_node::NodeConfigBuilder;
 
 fn keypair_from_secp256k1<S: AsRef<[u8]>>(private_key: S) -> anyhow::Result<Keypair> {
@@ -28,15 +28,12 @@ async fn main() -> anyhow::Result<()> {
     ];
 
     let pubsub_topics: Vec<PubsubTopic> = vec!["/waku/2/default-waku/proto".parse().unwrap()];
-    let relay_config = WakuRelayConfigBuilder::new()
-        .pubsub_topics(pubsub_topics)
-        .build();
 
     let config = NodeConfigBuilder::new()
         .keypair(keypair)
         .with_keepalive(true)
         .with_ping(true)
-        .with_waku_relay(relay_config)
+        .with_waku_relay(Default::default())
         .build();
 
     let mut node = Node::new(config.clone())?;
@@ -52,8 +49,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Subscribe to relay topics
-    if let Some(conf) = config.relay {
-        for topic in conf.pubsub_topics {
+    if config.relay.is_some() {
+        for topic in pubsub_topics {
             node.relay_subscribe(&topic).await?;
         }
     }

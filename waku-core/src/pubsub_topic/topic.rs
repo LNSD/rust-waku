@@ -43,7 +43,7 @@ impl fmt::Display for PubsubTopic {
 }
 
 impl FromStr for PubsubTopic {
-    type Err = ();
+    type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self(s.to_string()))

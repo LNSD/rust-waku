@@ -3,7 +3,7 @@ use log::info;
 use multiaddr::Multiaddr;
 
 use waku_core::pubsub_topic::PubsubTopic;
-use waku_node::{Event, Node, NodeConfig, NodeConfigBuilder, WakuRelayConfigBuilder};
+use waku_node::{Event, Node, NodeConfig, NodeConfigBuilder};
 
 use crate::config::Wakunode2Conf;
 
@@ -15,15 +15,19 @@ pub struct AppConf {
     pub topics: Vec<PubsubTopic>,
 }
 
-fn try_to_multiaddr(addr: Vec<String>) -> anyhow::Result<Vec<Multiaddr>> {
-    addr.into_iter()
+fn try_into_multiaddr(addr: &[String]) -> anyhow::Result<Vec<Multiaddr>> {
+    addr.iter()
         .map(|addr| addr.parse::<Multiaddr>())
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))
 }
 
-fn to_pubsub_topic(topic: Vec<String>) -> Vec<PubsubTopic> {
-    topic.into_iter().map(|t| t.into()).collect()
+fn to_pubsub_topic(topic: &[String]) -> anyhow::Result<Vec<PubsubTopic>> {
+    topic
+        .iter()
+        .map(|topic| topic.parse::<PubsubTopic>())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| anyhow::anyhow!("Failed to parse topic: {}", e))
 }
 
 fn keypair_from_secp256k1(private_key: String) -> anyhow::Result<Keypair> {
@@ -36,20 +40,6 @@ fn keypair_from_secp256k1(private_key: String) -> anyhow::Result<Keypair> {
     Ok(keypair)
 }
 
-impl TryFrom<Wakunode2Conf> for AppConf {
-    type Error = anyhow::Error;
-
-    fn try_from(c: Wakunode2Conf) -> Result<Self, Self::Error> {
-        let node_conf = c.clone().try_into()?;
-        Ok(Self {
-            node_conf,
-            listen_addresses: try_to_multiaddr(c.listen_addresses)?,
-            bootstrap_nodes: try_to_multiaddr(c.bootstrap_nodes)?,
-            topics: to_pubsub_topic(c.topics),
-        })
-    }
-}
-
 impl TryFrom<Wakunode2Conf> for NodeConfig {
     type Error = anyhow::Error;
 
@@ -59,12 +49,28 @@ impl TryFrom<Wakunode2Conf> for NodeConfig {
             .with_keepalive(c.keepalive);
 
         if c.relay {
-            let topics = to_pubsub_topic(c.topics);
-            let relay_config = WakuRelayConfigBuilder::new().pubsub_topics(topics).build();
-            builder = builder.with_waku_relay(relay_config);
+            builder = builder.with_waku_relay(Default::default());
         }
 
         Ok(builder.build())
+    }
+}
+
+impl TryFrom<Wakunode2Conf> for AppConf {
+    type Error = anyhow::Error;
+
+    fn try_from(c: Wakunode2Conf) -> Result<Self, Self::Error> {
+        let listen_addresses = try_into_multiaddr(&c.listen_addresses)?;
+        let bootstrap_nodes = try_into_multiaddr(&c.bootstrap_nodes)?;
+        let topics = to_pubsub_topic(&c.topics)?;
+
+        let node_conf = c.try_into()?;
+        Ok(Self {
+            node_conf,
+            listen_addresses,
+            bootstrap_nodes,
+            topics,
+        })
     }
 }
 
