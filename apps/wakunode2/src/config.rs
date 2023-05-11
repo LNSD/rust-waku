@@ -1,4 +1,3 @@
-use clap::CommandFactory;
 use config::Config;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, serde::Deserialize)]
@@ -20,18 +19,9 @@ pub struct Wakunode2Conf {
     pub topics: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, clap::Parser)]
-#[clap(author, version, about, long_about = None)]
-pub struct Wakunode2Cli {
-    #[clap(short = 'C', long, required = false, env = "WAKUNODE2_CONFIG_FILE")]
-    config_file: String,
-}
-
-pub fn load() -> anyhow::Result<Wakunode2Conf> {
-    let matches = Wakunode2Cli::command().get_matches();
-
+pub fn load(config_file: Option<String>) -> anyhow::Result<Wakunode2Conf> {
     let mut conf_builder = Config::builder();
-    if let Ok(Some(config_file)) = matches.try_get_one::<String>("config_file") {
+    if let Some(config_file) = config_file {
         conf_builder =
             conf_builder.add_source(config::File::with_name(config_file.as_str()).required(false));
     }
