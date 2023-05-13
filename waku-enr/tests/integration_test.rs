@@ -1,10 +1,10 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use multiaddr::Multiaddr;
 
-use waku_enr::{EnrBuilderExt, EnrExt, WakuEnrCapabilities};
 use waku_enr::enr::{CombinedKey, Enr, EnrBuilder, EnrKey};
+use waku_enr::{EnrBuilderExt, EnrExt, WakuEnrCapabilities};
 
 ///! https://rfc.vac.dev/spec/31/#many-connection-types
 #[test]

@@ -1,10 +1,9 @@
-use libp2p::identity::{Keypair, secp256k1};
+use libp2p::identity::{secp256k1, Keypair};
 use libp2p::Multiaddr;
 use log::{info, LevelFilter};
 
 use waku_core::pubsub_topic::PubsubTopic;
-use waku_node::Node;
-use waku_node::NodeConfigBuilder;
+use waku_node::{Node, NodeConfigBuilder};
 
 fn keypair_from_secp256k1<S: AsRef<[u8]>>(private_key: S) -> anyhow::Result<Keypair> {
     let raw_key = hex::decode(private_key)?;
@@ -27,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
         "/dns4/node-01.do-ams3.wakuv2.test.statusim.net/tcp/30303/p2p/16Uiu2HAmPLe7Mzm8TsYUubgCAW1aJoeFScxrLj8ppHFivPo97bUZ".parse()?,
     ];
 
-    let pubsub_topics: Vec<PubsubTopic> = vec!["/waku/2/default-waku/proto".parse().unwrap()];
+    let pubsub_topics: Vec<PubsubTopic> = vec!["/waku/2/default-waku/proto".parse()?];
 
     let config = NodeConfigBuilder::new()
         .keypair(keypair)

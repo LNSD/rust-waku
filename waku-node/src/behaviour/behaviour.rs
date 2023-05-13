@@ -1,8 +1,8 @@
-use libp2p::{identify, ping};
 use libp2p::identity::PublicKey;
 use libp2p::swarm::behaviour::toggle;
 use libp2p::swarm::keep_alive;
 use libp2p::swarm::NetworkBehaviour;
+use libp2p::{identify, ping};
 
 use crate::WakuRelayConfig;
 

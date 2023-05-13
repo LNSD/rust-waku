@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use libp2p::{core, dns, noise, PeerId, tcp, Transport, yamux};
 use libp2p::core::muxing::StreamMuxerBox;
 use libp2p::core::transport;
 use libp2p::identity::Keypair;
+use libp2p::{core, dns, noise, tcp, yamux, PeerId, Transport};
 use libp2p_mplex as mplex;
 
 /// Type alias for libp2p transport

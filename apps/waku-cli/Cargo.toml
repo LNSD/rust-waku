@@ -11,6 +11,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 bytes.workspace = true
 clap = { version = "4.2.7", features = ["derive"] }
+hex = "0.4.3"
 libp2p.workspace = true
 log = "0.4.17"
 multiaddr = "0.17.1"
@@ -19,3 +20,4 @@ tokio = { workspace = true, features = ["macros", "rt", "signal", "time"] }
 ulid = "1.0.0"
 waku-core = { version = "0.1.0", path = "../../waku-core" }
 waku-node = { version = "0.1.0", path = "../../waku-node" }
+waku-relay = { version = "0.1.0", path = "../../waku-relay" }

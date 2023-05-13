@@ -1,11 +1,21 @@
 use clap::Parser;
-use log::info;
 use log::LevelFilter;
+use log::{error, info};
 
-use crate::cli::Cli;
+use crate::cmd::{Cli, Commands, RelayCommand};
 
-mod app;
-mod cli;
+mod cmd;
+
+async fn run_cmd(cli: Cli) -> anyhow::Result<()> {
+    match cli.command {
+        Commands::Relay(RelayCommand::Publish(cmd_args)) => {
+            cmd::relay::publish::run_cmd(cmd_args).await
+        }
+        Commands::Relay(RelayCommand::Subscribe(cmd_args)) => {
+            cmd::relay::subscribe::run_cmd(cmd_args).await
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -16,21 +26,16 @@ async fn main() -> anyhow::Result<()> {
         .format_timestamp_millis()
         .init();
 
-    let conf = cli.into();
-    let mut app = app::App::new(conf)?;
-    app.setup().await?;
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            info!("ctrl-c received, shutting down");
+            return Ok(());
+        }
 
-    loop {
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
-                info!("ctrl-c received, shutting down");
-                break;
-            }
-
-            ev = app.run() => {
-                if let Ok(Some(event)) = ev {
-                    info!("{event:?}");
-                }
+        res = run_cmd(cli) => {
+            if let Err(e) = res {
+                error!("Error: {}", e);
+                return Err(e);
             }
         }
     }

@@ -7,8 +7,8 @@ pub struct PubsubTopic(String);
 
 impl PubsubTopic {
     pub fn new<S>(topic: S) -> PubsubTopic
-        where
-            S: Into<String>,
+    where
+        S: Into<String>,
     {
         PubsubTopic(topic.into())
     }
