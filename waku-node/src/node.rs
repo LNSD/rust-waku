@@ -1,5 +1,5 @@
-use libp2p::{Multiaddr, PeerId};
 use libp2p::swarm::SwarmBuilder;
+use libp2p::{Multiaddr, PeerId};
 use log::debug;
 use tokio::sync::{mpsc, oneshot};
 
@@ -9,8 +9,8 @@ use waku_core::pubsub_topic::PubsubTopic;
 use crate::behaviour::Behaviour;
 use crate::behaviour::Config as BehaviourConfig;
 use crate::event_loop::{Command, Event, EventLoop};
+use crate::transport::{default_transport, BoxedP2PTransport};
 use crate::NodeConfig;
-use crate::transport::{BoxedP2PTransport, default_transport};
 
 pub struct Node {
     peer_id: PeerId,

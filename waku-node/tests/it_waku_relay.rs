@@ -7,7 +7,7 @@ use tokio::time::sleep;
 
 use waku_core::message::WakuMessage;
 use waku_core::pubsub_topic::PubsubTopic;
-use waku_node::{Event, memory_transport, Node, NodeConfigBuilder};
+use waku_node::{memory_transport, Event, Node, NodeConfigBuilder};
 
 fn new_node(key: &str) -> Node {
     let keypair = {

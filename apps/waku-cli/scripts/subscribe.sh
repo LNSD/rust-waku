@@ -2,6 +2,5 @@
 PEER="/dns4/localhost/tcp/10015/p2p/16Uiu2HAmKXw1VChPNBPKUttgW5mQAFATEMaLSEGhCVYvRWabjBHj"
 PUBSUB_TOPIC="/waku/2/default-waku/proto"
 CONTENT_TOPIC="/rust-waku/example/raw"
-PAYLOAD=0xDEADBEEF
 
 ./target/debug/waku relay subscribe --peer $PEER --pubsub-topic $PUBSUB_TOPIC --content-topic $CONTENT_TOPIC

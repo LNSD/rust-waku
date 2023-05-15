@@ -1,4 +1,4 @@
-use libp2p::identity::{Keypair, secp256k1};
+use libp2p::identity::{secp256k1, Keypair};
 use log::info;
 use multiaddr::Multiaddr;
 

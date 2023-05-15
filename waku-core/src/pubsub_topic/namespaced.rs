@@ -46,15 +46,15 @@ impl NsPubsubTopic {
     }
 
     pub fn new_named_sharding<S>(name: S) -> Self
-        where
-            S: Into<String>,
+    where
+        S: Into<String>,
     {
         Self::NamedSharding(name.into())
     }
 
     pub fn raw<S>(name: S) -> Self
-        where
-            S: Into<String>,
+    where
+        S: Into<String>,
     {
         Self::Raw(name.into())
     }

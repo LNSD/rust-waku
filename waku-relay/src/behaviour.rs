@@ -1,9 +1,9 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use libp2p::{gossipsub, PeerId};
 use libp2p::gossipsub::{IdentTopic, MessageAuthenticity, MessageId, ValidationMode};
 use libp2p::swarm::NetworkBehaviour;
+use libp2p::{gossipsub, PeerId};
 use prost::Message;
 
 use waku_core::message::proto::waku::message::v1::WakuMessage as WakuMessageProto;
