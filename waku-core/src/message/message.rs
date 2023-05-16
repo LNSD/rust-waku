@@ -18,7 +18,7 @@ impl Debug for WakuMessage {
             Some(slice) => format!("{}…", hex::encode(slice)),
             None => hex::encode(&self.payload[..]),
         };
-        let meta_fmt = &self.meta.clone().map_or("[]".to_string(), hex::encode);
+        let meta_fmt = &self.meta.clone().map_or("None".to_string(), hex::encode);
 
         f.debug_struct("WakuMessage")
             .field("content_topic", &self.content_topic)

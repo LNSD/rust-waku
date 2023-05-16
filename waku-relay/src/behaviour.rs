@@ -1,6 +1,3 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-
 use libp2p::gossipsub::{IdentTopic, MessageAuthenticity, MessageId, ValidationMode};
 use libp2p::swarm::NetworkBehaviour;
 use libp2p::{gossipsub, PeerId};
@@ -12,6 +9,7 @@ use waku_core::pubsub_topic::PubsubTopic;
 
 use crate::error::{PublishError, SubscriptionError};
 use crate::event::Event;
+use crate::message_id::deterministic_message_id_fn;
 use crate::proto::MAX_WAKU_RELAY_MESSAGE_SIZE;
 
 pub const PROTOCOL_ID: &str = "/vac/waku/relay/2.0.0";
@@ -24,16 +22,10 @@ pub struct Behaviour {
 
 impl Default for Behaviour {
     fn default() -> Self {
-        let message_id_fn = |message: &gossipsub::Message| {
-            let mut hasher = DefaultHasher::new();
-            message.data.hash(&mut hasher);
-            MessageId::from(hasher.finish().to_string())
-        };
-
         let pubsub_config = gossipsub::ConfigBuilder::default()
             .protocol_id(PROTOCOL_ID, gossipsub::Version::V1_1)
             .validation_mode(ValidationMode::Anonymous) // StrictNoSign
-            .message_id_fn(message_id_fn)
+            .message_id_fn(deterministic_message_id_fn)
             .max_transmit_size(MAX_WAKU_RELAY_MESSAGE_SIZE)
             .build()
             .expect("valid pubsub configuration");

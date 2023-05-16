@@ -1,4 +1,5 @@
 ///! Waku content topic.
+use std::convert::Infallible;
 use std::fmt;
 use std::str::FromStr;
 
@@ -6,6 +7,7 @@ use std::str::FromStr;
 pub struct ContentTopic(String);
 
 impl ContentTopic {
+    /// Create a new `ContentTopic` from a string.
     pub fn new<S>(topic: S) -> ContentTopic
     where
         S: Into<String>,
@@ -13,45 +15,71 @@ impl ContentTopic {
         ContentTopic(topic.into())
     }
 
-    /// Return the length in bytes of this content topic.
+    /// Return the length in bytes of this `ContentTopic`.
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
-    /// Returns true if the length of this content topic.
+    /// Returns true if the length of this `ContentTopic`.
     pub fn is_empty(&self) -> bool {
-        self.0.len() == 0
+        self.0.is_empty()
     }
 
-    /// Return a copy of this conte topic's byte representation.
-    pub fn to_vec(&self) -> Vec<u8> {
-        self.0.clone().into_bytes()
+    /// Convert this `ContentTopic` into a byte vector.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0.into_bytes()
+    }
+
+    /// Return a byte slice of this `ContentTopic`'s content.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    /// Return a string slice of this `ContentTopic`'s content.
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
 impl fmt::Debug for ContentTopic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.to_string().fmt(f)
+        self.0.fmt(f)
     }
 }
 
 impl fmt::Display for ContentTopic {
-    /// Convert a ContentTopic to a string
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
 
 impl FromStr for ContentTopic {
-    type Err = ();
-
+    type Err = Infallible;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self(s.to_string()))
+        Ok(Self(s.to_owned()))
+    }
+}
+
+impl From<&str> for ContentTopic {
+    fn from(s: &str) -> Self {
+        Self(s.to_owned())
     }
 }
 
 impl From<String> for ContentTopic {
     fn from(s: String) -> Self {
         Self(s)
+    }
+}
+
+impl AsRef<str> for ContentTopic {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl AsRef<[u8]> for ContentTopic {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
     }
 }
