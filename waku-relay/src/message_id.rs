@@ -1,5 +1,3 @@
-use libp2p::gossipsub;
-use libp2p::gossipsub::MessageId;
 use prost::Message;
 use sha2::digest::generic_array::GenericArray;
 use sha2::digest::typenum::U32;
@@ -7,6 +5,9 @@ use sha2::digest::FixedOutput;
 use sha2::{Digest, Sha256};
 
 use waku_core::message::proto::waku::message::v1::WakuMessage;
+
+use crate::gossipsub;
+use crate::gossipsub::MessageId;
 
 /// Fallback message ID function.
 fn fallback_message_id_fn(message: &gossipsub::Message) -> MessageId {

@@ -1,9 +1,8 @@
 //! Error types that can result from Waku relay.
 
-use libp2p::gossipsub;
-
 use crate::error::PublishError::{Duplicate, GossipsubError, InsufficientPeers, MessageTooLarge};
 use crate::error::SubscriptionError::NotAllowed;
+use crate::gossipsub;
 
 /// Error associated with publishing a Waku message.
 #[derive(Debug, thiserror::Error)]

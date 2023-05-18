@@ -1,6 +1,6 @@
-use libp2p::gossipsub::{IdentTopic, MessageAuthenticity, MessageId, ValidationMode};
+use crate::gossipsub::{IdentTopic, MessageAuthenticity, MessageId, ValidationMode};
 use libp2p::swarm::NetworkBehaviour;
-use libp2p::{gossipsub, PeerId};
+use libp2p::PeerId;
 use prost::Message;
 
 use waku_core::message::proto::waku::message::v1::WakuMessage as WakuMessageProto;
@@ -9,6 +9,7 @@ use waku_core::pubsub_topic::PubsubTopic;
 
 use crate::error::{PublishError, SubscriptionError};
 use crate::event::Event;
+use crate::gossipsub;
 use crate::message_id::deterministic_message_id_fn;
 use crate::proto::MAX_WAKU_RELAY_MESSAGE_SIZE;
 

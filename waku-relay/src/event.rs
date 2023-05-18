@@ -1,7 +1,8 @@
-use libp2p::{gossipsub, PeerId};
+use libp2p::PeerId;
 use prost::Message;
 use strum_macros::Display;
 
+use crate::gossipsub;
 use waku_core::message::proto::waku::message::v1::WakuMessage as WakuMessageProto;
 use waku_core::message::WakuMessage;
 use waku_core::message::MAX_WAKU_MESSAGE_SIZE;
