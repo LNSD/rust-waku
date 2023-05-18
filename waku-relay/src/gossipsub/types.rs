@@ -29,7 +29,7 @@ use prost::Message as ProstMessage;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::gossipsub::rpc::proto;
+use crate::gossipsub::rpc::proto::waku::relay::v2::{Message as MessageProto, Rpc as RpcProto};
 use crate::gossipsub::TopicHash;
 
 #[derive(Debug)]
@@ -49,17 +49,33 @@ macro_rules! declare_message_id_type {
     ($name: ident, $name_string: expr) => {
         #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
         #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-        pub struct $name(pub Vec<u8>);
+        pub struct $name(Vec<u8>);
 
         impl $name {
-            pub fn new(value: &[u8]) -> Self {
+            pub fn new<T: Into<Vec<u8>>>(value: T) -> Self {
+                Self(value.into())
+            }
+
+            pub fn new_from_slice(value: &[u8]) -> Self {
                 Self(value.to_vec())
             }
         }
 
-        impl<T: Into<Vec<u8>>> From<T> for $name {
-            fn from(value: T) -> Self {
-                Self(value.into())
+        impl From<Vec<u8>> for $name {
+            fn from(value: Vec<u8>) -> Self {
+                Self(value)
+            }
+        }
+
+        impl From<Bytes> for $name {
+            fn from(value: Bytes) -> Self {
+                Self(value.to_vec())
+            }
+        }
+
+        impl Into<Bytes> for $name {
+            fn into(self) -> Bytes {
+                Bytes::from(self.0)
             }
         }
 
@@ -137,7 +153,7 @@ pub struct RawMessage {
 impl RawMessage {
     /// Calculates the encoded length of this message (used for calculating metrics).
     pub fn raw_protobuf_len(&self) -> usize {
-        let message = proto::waku::relay::v2::Message {
+        let message = MessageProto {
             from: self.source.map(|m| Bytes::from(m.to_bytes())),
             data: Some(Bytes::from(self.data.clone())),
             seqno: self
@@ -253,114 +269,8 @@ pub struct Rpc {
 impl Rpc {
     /// Converts the GossipsubRPC into its protobuf format.
     // A convenience function to avoid explicitly specifying types.
-    pub fn into_protobuf(self) -> proto::waku::relay::v2::Rpc {
+    pub fn into_protobuf(self) -> RpcProto {
         self.into()
-    }
-}
-
-impl From<Rpc> for proto::waku::relay::v2::Rpc {
-    /// Converts the RPC into protobuf format.
-    fn from(rpc: Rpc) -> Self {
-        // Messages
-        let mut publish = Vec::new();
-
-        for message in rpc.messages.into_iter() {
-            let message = proto::waku::relay::v2::Message {
-                from: message.source.map(|m| Bytes::from(m.to_bytes())),
-                data: Some(Bytes::from(message.data)),
-                seqno: message
-                    .sequence_number
-                    .map(|s| Bytes::copy_from_slice(&s.to_be_bytes())),
-                topic: TopicHash::into_string(message.topic),
-                signature: message.signature.map(Bytes::from),
-                key: message.key.map(Bytes::from),
-            };
-
-            publish.push(message);
-        }
-
-        // subscriptions
-        let subscriptions = rpc
-            .subscriptions
-            .into_iter()
-            .map(|sub| proto::waku::relay::v2::rpc::SubOpts {
-                subscribe: Some(sub.action == SubscriptionAction::Subscribe),
-                topic_id: Some(sub.topic_hash.into_string()),
-            })
-            .collect::<Vec<_>>();
-
-        // control messages
-        let mut control = proto::waku::relay::v2::ControlMessage {
-            ihave: Vec::new(),
-            iwant: Vec::new(),
-            graft: Vec::new(),
-            prune: Vec::new(),
-        };
-
-        let empty_control_msg = rpc.control_msgs.is_empty();
-
-        for action in rpc.control_msgs {
-            match action {
-                // collect all ihave messages
-                ControlAction::IHave {
-                    topic_hash,
-                    message_ids,
-                } => {
-                    let rpc_ihave = proto::waku::relay::v2::ControlIHave {
-                        topic_id: Some(topic_hash.into_string()),
-                        message_ids: message_ids
-                            .into_iter()
-                            .map(|msg_id| Bytes::from(msg_id.0))
-                            .collect(),
-                    };
-                    control.ihave.push(rpc_ihave);
-                }
-                ControlAction::IWant { message_ids } => {
-                    let rpc_iwant = proto::waku::relay::v2::ControlIWant {
-                        message_ids: message_ids
-                            .into_iter()
-                            .map(|msg_id| Bytes::from(msg_id.0))
-                            .collect(),
-                    };
-                    control.iwant.push(rpc_iwant);
-                }
-                ControlAction::Graft { topic_hash } => {
-                    let rpc_graft = proto::waku::relay::v2::ControlGraft {
-                        topic_id: Some(topic_hash.into_string()),
-                    };
-                    control.graft.push(rpc_graft);
-                }
-                ControlAction::Prune {
-                    topic_hash,
-                    peers,
-                    backoff,
-                } => {
-                    let rpc_prune = proto::waku::relay::v2::ControlPrune {
-                        topic_id: Some(topic_hash.into_string()),
-                        peers: peers
-                            .into_iter()
-                            .map(|info| proto::waku::relay::v2::PeerInfo {
-                                peer_id: info.peer_id.map(|id| Bytes::from(id.to_bytes())),
-                                /// TODO, see https://github.com/libp2p/specs/pull/217
-                                signed_peer_record: None,
-                            })
-                            .collect(),
-                        backoff,
-                    };
-                    control.prune.push(rpc_prune);
-                }
-            }
-        }
-
-        proto::waku::relay::v2::Rpc {
-            subscriptions,
-            publish,
-            control: if empty_control_msg {
-                None
-            } else {
-                Some(control)
-            },
-        }
     }
 }
 

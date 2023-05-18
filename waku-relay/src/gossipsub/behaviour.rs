@@ -18,7 +18,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use bytes::Bytes;
 use std::{cmp::Ordering::Equal, fmt::Debug};
 use std::{
     cmp::{max, Ordering},
@@ -31,6 +30,7 @@ use std::{
     time::Duration,
 };
 
+use bytes::Bytes;
 use futures::StreamExt;
 use instant::SystemTime;
 use libp2p::core::{multiaddr::Protocol::Ip4, multiaddr::Protocol::Ip6, Endpoint, Multiaddr};
@@ -45,7 +45,6 @@ use libp2p::swarm::{
 use log::{debug, error, trace, warn};
 use prometheus_client::registry::Registry;
 use prost::Message as ProstMessage;
-
 use rand::{seq::SliceRandom, thread_rng};
 use wasm_timer::Instant;
 use wasm_timer::Interval;
@@ -58,6 +57,9 @@ use crate::gossipsub::mcache::MessageCache;
 use crate::gossipsub::metrics_priv::{Churn, Config as MetricsConfig, Inclusion, Metrics, Penalty};
 use crate::gossipsub::peer_score::{PeerScore, PeerScoreParams, PeerScoreThresholds, RejectReason};
 use crate::gossipsub::protocol_priv::{ProtocolConfig, SIGNING_PREFIX};
+use crate::gossipsub::rpc::proto::waku::relay::v2::{
+    ControlMessage as ControlMessageProto, Message as MessageProto, Rpc as RpcProto,
+};
 use crate::gossipsub::subscription_filter_priv::{
     AllowAllSubscriptionFilter, TopicSubscriptionFilter,
 };
@@ -69,7 +71,7 @@ use crate::gossipsub::types::{
     Subscription, SubscriptionAction,
 };
 use crate::gossipsub::types::{PeerConnections, PeerKind, Rpc};
-use crate::gossipsub::{rpc::proto, TopicScoreParams};
+use crate::gossipsub::TopicScoreParams;
 use crate::gossipsub::{PublishError, SubscriptionError, ValidationError};
 
 /// Determines if published messages should be signed or not.
@@ -2787,7 +2789,7 @@ where
                 let sequence_number = last_seq_no.next();
 
                 let signature = {
-                    let message = proto::waku::relay::v2::Message {
+                    let message = MessageProto {
                         from: Some(Bytes::from(author.clone().to_bytes())),
                         data: Some(Bytes::from(data.clone())),
                         seqno: Some(Bytes::copy_from_slice(&sequence_number.to_be_bytes())),
@@ -2896,11 +2898,7 @@ where
 
     /// Send a [`Rpc`] message to a peer. This will wrap the message in an arc if it
     /// is not already an arc.
-    fn send_message(
-        &mut self,
-        peer_id: PeerId,
-        message: proto::waku::relay::v2::Rpc,
-    ) -> Result<(), PublishError> {
+    fn send_message(&mut self, peer_id: PeerId, message: RpcProto) -> Result<(), PublishError> {
         // If the message is oversized, try and fragment it. If it cannot be fragmented, log an
         // error and drop the message (all individual messages should be small enough to fit in the
         // max_transmit_size)
@@ -2919,15 +2917,12 @@ where
 
     // If a message is too large to be sent as-is, this attempts to fragment it into smaller RPC
     // messages to be sent.
-    fn fragment_message(
-        &self,
-        rpc: proto::waku::relay::v2::Rpc,
-    ) -> Result<Vec<proto::waku::relay::v2::Rpc>, PublishError> {
+    fn fragment_message(&self, rpc: RpcProto) -> Result<Vec<RpcProto>, PublishError> {
         if rpc.encoded_len() < self.config.max_transmit_size() {
             return Ok(vec![rpc]);
         }
 
-        let new_rpc = proto::waku::relay::v2::Rpc {
+        let new_rpc = RpcProto {
             subscriptions: Vec::new(),
             publish: Vec::new(),
             control: None,
@@ -2983,7 +2978,7 @@ where
 
         // handle the control messages. If all are within the max_transmit_size, send them without
         // fragmenting, otherwise, fragment the control messages
-        let empty_control = proto::waku::relay::v2::ControlMessage::default();
+        let empty_control = ControlMessageProto::default();
         if let Some(control) = rpc.control.as_ref() {
             if control.encoded_len() + 2 > self.config.max_transmit_size() {
                 // fragment the RPC

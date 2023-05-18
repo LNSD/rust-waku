@@ -39,12 +39,13 @@ use waku_core::common::{protobuf_codec, quick_protobuf_codec};
 
 use crate::gossipsub::config::{ValidationMode, Version};
 use crate::gossipsub::handler::HandlerEvent;
+use crate::gossipsub::rpc::proto::waku::relay::v2::{Message as MessageProto, Rpc as RpcProto};
 use crate::gossipsub::topic::TopicHash;
 use crate::gossipsub::types::{
-    ControlAction, MessageId, PeerInfo, PeerKind, RawMessage, Rpc, Subscription, SubscriptionAction,
+    ControlAction, PeerInfo, PeerKind, RawMessage, Rpc, Subscription, SubscriptionAction,
 };
+use crate::gossipsub::Config;
 use crate::gossipsub::ValidationError;
-use crate::gossipsub::{rpc::proto, Config};
 
 pub(crate) const SIGNING_PREFIX: &[u8] = b"libp2p-pubsub:";
 
@@ -196,7 +197,7 @@ pub struct GossipsubCodec {
     /// Determines the level of validation performed on incoming messages.
     validation_mode: ValidationMode,
     /// The codec to handle common encoding/decoding of protobuf messages
-    codec: protobuf_codec::Codec<proto::waku::relay::v2::Rpc>,
+    codec: protobuf_codec::Codec<RpcProto>,
 }
 
 impl GossipsubCodec {
@@ -211,7 +212,7 @@ impl GossipsubCodec {
     /// Verifies a gossipsub message. This returns either a success or failure. All errors
     /// are logged, which prevents error handling in the codec and handler. We simply drop invalid
     /// messages and log warnings, rather than propagating errors through the codec.
-    fn verify_signature(message: &proto::waku::relay::v2::Message) -> bool {
+    fn verify_signature(message: &MessageProto) -> bool {
         let from = match message.from.as_ref() {
             Some(v) => v,
             None => {
@@ -268,7 +269,7 @@ impl GossipsubCodec {
 }
 
 impl Encoder for GossipsubCodec {
-    type Item = proto::waku::relay::v2::Rpc;
+    type Item = RpcProto;
     type Error = io::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
@@ -469,11 +470,7 @@ impl Decoder for GossipsubCodec {
                 .into_iter()
                 .map(|ihave| ControlAction::IHave {
                     topic_hash: TopicHash::from_raw(ihave.topic_id.unwrap_or_default()),
-                    message_ids: ihave
-                        .message_ids
-                        .into_iter()
-                        .map(MessageId::from)
-                        .collect::<Vec<_>>(),
+                    message_ids: ihave.message_ids.into_iter().map(Into::into).collect(),
                 })
                 .collect();
 
@@ -484,7 +481,7 @@ impl Decoder for GossipsubCodec {
                     message_ids: iwant
                         .message_ids
                         .into_iter()
-                        .map(MessageId::from)
+                        .map(Into::into)
                         .collect::<Vec<_>>(),
                 })
                 .collect();

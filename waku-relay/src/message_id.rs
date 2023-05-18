@@ -15,7 +15,7 @@ fn fallback_message_id_fn(message: &gossipsub::Message) -> MessageId {
     hasher.update(&message.data);
     let result = hasher.finalize_fixed();
 
-    MessageId::new(result.as_ref())
+    MessageId::new(result.to_vec())
 }
 
 /// Compute Waku v2 message's [deterministic hash](https://rfc.vac.dev/spec/14/#deterministic-message-hashing).
@@ -48,7 +48,7 @@ pub fn deterministic_message_id_fn(message: &gossipsub::Message) -> MessageId {
 
     let result = compute_deterministic_message_hash(pubsub_topic, waku_message);
 
-    MessageId::new(result.as_ref())
+    MessageId::new(result.to_vec())
 }
 
 #[cfg(test)]

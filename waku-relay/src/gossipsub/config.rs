@@ -439,7 +439,7 @@ impl Default for ConfigBuilder {
                     };
                     source_string
                         .push_str(&message.sequence_number.unwrap_or_default().to_string());
-                    MessageId::from(source_string)
+                    MessageId::new(source_string.into_bytes())
                 }),
                 fast_message_id_fn: None,
                 allow_self_origin: false,
