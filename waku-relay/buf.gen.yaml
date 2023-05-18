@@ -1,0 +1,13 @@
+version: v1
+plugins:
+  - remote: buf.build/prost/plugins/prost:v0.2.1-1
+    out: proto/
+    opt:
+      - bytes=.
+      - compile_well_known_types
+  - name: prost-crate
+    out: .
+    opt:
+      - include_file=proto/mod.rs
+      - no_features
+    strategy: all
