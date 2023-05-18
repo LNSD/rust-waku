@@ -29,7 +29,7 @@ use prost::Message as ProstMessage;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::gossipsub::rpc::proto::waku::relay::v2::{Message as MessageProto, Rpc as RpcProto};
+use crate::gossipsub::rpc::proto::waku::relay::v2::Message as MessageProto;
 use crate::gossipsub::TopicHash;
 
 #[derive(Debug)]
@@ -123,6 +123,18 @@ pub enum PeerKind {
     Floodsub,
     /// The peer doesn't support any of the protocols.
     NotSupported,
+}
+
+impl fmt::Display for PeerKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = match self {
+            Self::NotSupported => "Not Supported",
+            Self::Floodsub => "Floodsub",
+            Self::Gossipsub => "Gossipsub v1.0",
+            Self::Gossipsubv1_1 => "Gossipsub v1.1",
+        };
+        f.write_str(kind)
+    }
 }
 
 /// A message received by the gossipsub system and stored locally in caches..
@@ -266,14 +278,6 @@ pub struct Rpc {
     pub control_msgs: Vec<ControlAction>,
 }
 
-impl Rpc {
-    /// Converts the GossipsubRPC into its protobuf format.
-    // A convenience function to avoid explicitly specifying types.
-    pub fn into_protobuf(self) -> RpcProto {
-        self.into()
-    }
-}
-
 impl fmt::Debug for Rpc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut b = f.debug_struct("GossipsubRpc");
@@ -287,28 +291,5 @@ impl fmt::Debug for Rpc {
             b.field("control_msgs", &self.control_msgs);
         }
         b.finish()
-    }
-}
-
-impl PeerKind {
-    pub fn as_static_ref(&self) -> &'static str {
-        match self {
-            Self::NotSupported => "Not Supported",
-            Self::Floodsub => "Floodsub",
-            Self::Gossipsub => "Gossipsub v1.0",
-            Self::Gossipsubv1_1 => "Gossipsub v1.1",
-        }
-    }
-}
-
-impl AsRef<str> for PeerKind {
-    fn as_ref(&self) -> &str {
-        self.as_static_ref()
-    }
-}
-
-impl fmt::Display for PeerKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_ref())
     }
 }

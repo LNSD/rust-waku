@@ -24,6 +24,7 @@ use std::{
     time::Duration,
 };
 
+use crate::gossipsub::codec::Codec;
 use asynchronous_codec::Framed;
 use futures::future::Either;
 use futures::prelude::*;
@@ -39,7 +40,7 @@ use libp2p::swarm::NegotiatedSubstream;
 use smallvec::SmallVec;
 use void::Void;
 
-use crate::gossipsub::protocol_priv::{GossipsubCodec, ProtocolConfig};
+use crate::gossipsub::protocol_priv::ProtocolConfig;
 use crate::gossipsub::rpc::proto::waku::relay::v2::Rpc as RpcProto;
 use crate::gossipsub::types::{PeerKind, RawMessage, Rpc};
 use crate::gossipsub::ValidationError;
@@ -144,9 +145,9 @@ pub enum DisabledHandler {
 /// State of the inbound substream, opened either by us or by the remote.
 enum InboundSubstreamState {
     /// Waiting for a message from the remote. The idle state for an inbound substream.
-    WaitingInput(Framed<NegotiatedSubstream, GossipsubCodec>),
+    WaitingInput(Framed<NegotiatedSubstream, Codec>),
     /// The substream is being closed.
-    Closing(Framed<NegotiatedSubstream, GossipsubCodec>),
+    Closing(Framed<NegotiatedSubstream, Codec>),
     /// An error occurred during processing.
     Poisoned,
 }
@@ -154,11 +155,11 @@ enum InboundSubstreamState {
 /// State of the outbound substream, opened either by us or by the remote.
 enum OutboundSubstreamState {
     /// Waiting for the user to send a message. The idle state for an outbound substream.
-    WaitingOutput(Framed<NegotiatedSubstream, GossipsubCodec>),
+    WaitingOutput(Framed<NegotiatedSubstream, Codec>),
     /// Waiting to send a message to the remote.
-    PendingSend(Framed<NegotiatedSubstream, GossipsubCodec>, RpcProto),
+    PendingSend(Framed<NegotiatedSubstream, Codec>, RpcProto),
     /// Waiting to flush the substream so that the data arrives to the remote.
-    PendingFlush(Framed<NegotiatedSubstream, GossipsubCodec>),
+    PendingFlush(Framed<NegotiatedSubstream, Codec>),
     /// An error occurred during processing.
     Poisoned,
 }
@@ -186,7 +187,7 @@ impl Handler {
 impl EnabledHandler {
     fn on_fully_negotiated_inbound(
         &mut self,
-        (substream, peer_kind): (Framed<NegotiatedSubstream, GossipsubCodec>, PeerKind),
+        (substream, peer_kind): (Framed<NegotiatedSubstream, Codec>, PeerKind),
     ) {
         // update the known kind of peer
         if self.peer_kind.is_none() {
@@ -533,9 +534,9 @@ impl ConnectionHandler for Handler {
                         log::debug!("Dial upgrade error: Protocol negotiation timeout");
                     }
                     ConnectionEvent::DialUpgradeError(DialUpgradeError {
-                        error: ConnectionHandlerUpgrErr::Upgrade(UpgradeError::Apply(e)),
+                        error: ConnectionHandlerUpgrErr::Upgrade(UpgradeError::Apply(_)),
                         ..
-                    }) => void::unreachable(e),
+                    }) => {}
                     ConnectionEvent::DialUpgradeError(DialUpgradeError {
                         error:
                             ConnectionHandlerUpgrErr::Upgrade(UpgradeError::Select(
