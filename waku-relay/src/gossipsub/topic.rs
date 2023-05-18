@@ -25,7 +25,7 @@ use prometheus_client::encoding::EncodeLabelSet;
 use prost::Message;
 use sha2::{Digest, Sha256};
 
-use crate::gossipsub::rpc::proto;
+use crate::gossipsub::rpc::proto::waku::relay::v2::TopicDescriptor as TopicDescriptorProto;
 
 /// A generic trait that can be extended for various hashing types for a topic.
 pub trait Hasher {
@@ -50,7 +50,7 @@ impl Hasher for Sha256Hash {
     /// Creates a [`TopicHash`] by SHA256 hashing the topic then base64 encoding the
     /// hash.
     fn hash(topic_string: String) -> TopicHash {
-        let topic_descriptor = proto::waku::relay::v2::TopicDescriptor {
+        let topic_descriptor = TopicDescriptorProto {
             name: Some(topic_string),
             auth: None,
             enc: None,
