@@ -18,6 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use bytes::Bytes;
 use std::{cmp::Ordering::Equal, fmt::Debug};
 use std::{
     cmp::{max, Ordering},
@@ -43,7 +44,8 @@ use libp2p::swarm::{
 };
 use log::{debug, error, trace, warn};
 use prometheus_client::registry::Registry;
-use quick_protobuf::{MessageWrite, Writer};
+use prost::Message as ProstMessage;
+
 use rand::{seq::SliceRandom, thread_rng};
 use wasm_timer::Instant;
 use wasm_timer::Interval;
@@ -67,7 +69,7 @@ use crate::gossipsub::types::{
     Subscription, SubscriptionAction,
 };
 use crate::gossipsub::types::{PeerConnections, PeerKind, Rpc};
-use crate::gossipsub::{rpc_proto::proto, TopicScoreParams};
+use crate::gossipsub::{rpc::proto, TopicScoreParams};
 use crate::gossipsub::{PublishError, SubscriptionError, ValidationError};
 
 /// Determines if published messages should be signed or not.
@@ -635,7 +637,7 @@ where
         .into_protobuf();
 
         // check that the size doesn't exceed the max transmission size
-        if event.get_size() > self.config.max_transmit_size() {
+        if event.encoded_len() > self.config.max_transmit_size() {
             return Err(PublishError::MessageTooLarge);
         }
 
@@ -746,7 +748,7 @@ where
         }
 
         // Send to peers we know are subscribed to the topic.
-        let msg_bytes = event.get_size();
+        let msg_bytes = event.encoded_len();
         for peer_id in recipient_peers.iter() {
             trace!("Sending message to peer: {:?}", peer_id);
             self.send_message(*peer_id, event.clone())?;
@@ -1363,7 +1365,7 @@ where
             }
             .into_protobuf();
 
-            let msg_bytes = message.get_size();
+            let msg_bytes = message.encoded_len();
 
             if self.send_message(*peer_id, message).is_err() {
                 error!("Failed to send cached messages. Messages too large");
@@ -2754,7 +2756,7 @@ where
             }
             .into_protobuf();
 
-            let msg_bytes = event.get_size();
+            let msg_bytes = event.encoded_len();
             for peer in recipient_peers.iter() {
                 debug!("Sending message: {:?} to peer {:?}", msg_id, peer);
                 self.send_message(*peer, event.clone())?;
@@ -2785,21 +2787,17 @@ where
                 let sequence_number = last_seq_no.next();
 
                 let signature = {
-                    let message = proto::Message {
-                        from: Some(author.clone().to_bytes()),
-                        data: Some(data.clone()),
-                        seqno: Some(sequence_number.to_be_bytes().to_vec()),
+                    let message = proto::waku::relay::v2::Message {
+                        from: Some(Bytes::from(author.clone().to_bytes())),
+                        data: Some(Bytes::from(data.clone())),
+                        seqno: Some(Bytes::copy_from_slice(&sequence_number.to_be_bytes())),
                         topic: topic.clone().into_string(),
                         signature: None,
                         key: None,
                     };
 
-                    let mut buf = Vec::with_capacity(message.get_size());
-                    let mut writer = Writer::new(&mut buf);
-
-                    message
-                        .write_message(&mut writer)
-                        .expect("Encoding to succeed");
+                    let mut buf = Vec::with_capacity(message.encoded_len());
+                    message.encode(&mut buf).expect("Encoding to succeed");
 
                     // the signature is over the bytes "libp2p-pubsub:<protobuf-message>"
                     let mut signature_bytes = SIGNING_PREFIX.to_vec();
@@ -2898,7 +2896,11 @@ where
 
     /// Send a [`Rpc`] message to a peer. This will wrap the message in an arc if it
     /// is not already an arc.
-    fn send_message(&mut self, peer_id: PeerId, message: proto::RPC) -> Result<(), PublishError> {
+    fn send_message(
+        &mut self,
+        peer_id: PeerId,
+        message: proto::waku::relay::v2::Rpc,
+    ) -> Result<(), PublishError> {
         // If the message is oversized, try and fragment it. If it cannot be fragmented, log an
         // error and drop the message (all individual messages should be small enough to fit in the
         // max_transmit_size)
@@ -2917,12 +2919,15 @@ where
 
     // If a message is too large to be sent as-is, this attempts to fragment it into smaller RPC
     // messages to be sent.
-    fn fragment_message(&self, rpc: proto::RPC) -> Result<Vec<proto::RPC>, PublishError> {
-        if rpc.get_size() < self.config.max_transmit_size() {
+    fn fragment_message(
+        &self,
+        rpc: proto::waku::relay::v2::Rpc,
+    ) -> Result<Vec<proto::waku::relay::v2::Rpc>, PublishError> {
+        if rpc.encoded_len() < self.config.max_transmit_size() {
             return Ok(vec![rpc]);
         }
 
-        let new_rpc = proto::RPC {
+        let new_rpc = proto::waku::relay::v2::Rpc {
             subscriptions: Vec::new(),
             publish: Vec::new(),
             control: None,
@@ -2938,7 +2943,7 @@ where
 
                 // create a new RPC if the new object plus 5% of its size (for length prefix
                 // buffers) exceeds the max transmit size.
-                if rpc_list[list_index].get_size() + (($object_size as f64) * 1.05) as usize
+                if rpc_list[list_index].encoded_len() + (($object_size as f64) * 1.05) as usize
                     > self.config.max_transmit_size()
                     && rpc_list[list_index] != new_rpc
                 {
@@ -2950,7 +2955,7 @@ where
 
         macro_rules! add_item {
             ($object: ident, $type: ident ) => {
-                let object_size = $object.get_size();
+                let object_size = $object.encoded_len();
 
                 if object_size + 2 > self.config.max_transmit_size() {
                     // This should not be possible. All received and published messages have already
@@ -2978,12 +2983,12 @@ where
 
         // handle the control messages. If all are within the max_transmit_size, send them without
         // fragmenting, otherwise, fragment the control messages
-        let empty_control = proto::ControlMessage::default();
+        let empty_control = proto::waku::relay::v2::ControlMessage::default();
         if let Some(control) = rpc.control.as_ref() {
-            if control.get_size() + 2 > self.config.max_transmit_size() {
+            if control.encoded_len() + 2 > self.config.max_transmit_size() {
                 // fragment the RPC
                 for ihave in &control.ihave {
-                    let len = ihave.get_size();
+                    let len = ihave.encoded_len();
                     create_or_add_rpc!(len);
                     rpc_list
                         .last_mut()
@@ -2994,7 +2999,7 @@ where
                         .push(ihave.clone());
                 }
                 for iwant in &control.iwant {
-                    let len = iwant.get_size();
+                    let len = iwant.encoded_len();
                     create_or_add_rpc!(len);
                     rpc_list
                         .last_mut()
@@ -3005,7 +3010,7 @@ where
                         .push(iwant.clone());
                 }
                 for graft in &control.graft {
-                    let len = graft.get_size();
+                    let len = graft.encoded_len();
                     create_or_add_rpc!(len);
                     rpc_list
                         .last_mut()
@@ -3016,7 +3021,7 @@ where
                         .push(graft.clone());
                 }
                 for prune in &control.prune {
-                    let len = prune.get_size();
+                    let len = prune.encoded_len();
                     create_or_add_rpc!(len);
                     rpc_list
                         .last_mut()
@@ -3027,7 +3032,7 @@ where
                         .push(prune.clone());
                 }
             } else {
-                let len = control.get_size();
+                let len = control.encoded_len();
                 create_or_add_rpc!(len);
                 rpc_list.last_mut().expect("Always an element").control = Some(control.clone());
             }

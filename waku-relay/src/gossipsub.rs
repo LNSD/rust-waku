@@ -188,7 +188,7 @@ mod topic;
 mod transform;
 mod types;
 
-mod rpc_proto;
+mod rpc;
 
 #[deprecated(note = "This error will no longer be emitted")]
 pub type HandlerError = error_priv::HandlerError;

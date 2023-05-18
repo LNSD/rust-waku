@@ -22,10 +22,10 @@ use std::fmt;
 
 use base64::prelude::*;
 use prometheus_client::encoding::EncodeLabelSet;
-use quick_protobuf::Writer;
+use prost::Message;
 use sha2::{Digest, Sha256};
 
-use crate::gossipsub::rpc_proto::proto;
+use crate::gossipsub::rpc::proto;
 
 /// A generic trait that can be extended for various hashing types for a topic.
 pub trait Hasher {
@@ -44,22 +44,20 @@ impl Hasher for IdentityHash {
 }
 
 #[derive(Debug, Clone)]
-pub struct Sha256Hash {}
+pub struct Sha256Hash;
+
 impl Hasher for Sha256Hash {
     /// Creates a [`TopicHash`] by SHA256 hashing the topic then base64 encoding the
     /// hash.
     fn hash(topic_string: String) -> TopicHash {
-        use quick_protobuf::MessageWrite;
-
-        let topic_descripter = proto::TopicDescriptor {
+        let topic_descriptor = proto::waku::relay::v2::TopicDescriptor {
             name: Some(topic_string),
             auth: None,
             enc: None,
         };
-        let mut bytes = Vec::with_capacity(topic_descripter.get_size());
-        let mut writer = Writer::new(&mut bytes);
-        topic_descripter
-            .write_message(&mut writer)
+        let mut bytes = Vec::with_capacity(topic_descriptor.encoded_len());
+        topic_descriptor
+            .encode(&mut bytes)
             .expect("Encoding to succeed");
         let hash = BASE64_STANDARD.encode(Sha256::digest(&bytes));
         TopicHash { hash }
