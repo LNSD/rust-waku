@@ -20,16 +20,16 @@
 
 //! A collection of types using the Gossipsub system.
 use std::fmt;
-use std::fmt::Debug;
 
-use libp2p::PeerId;
+use bytes::Bytes;
 use libp2p::swarm::ConnectionId;
+use libp2p::PeerId;
 use prometheus_client::encoding::EncodeLabelValue;
-use quick_protobuf::MessageWrite;
+use prost::Message as ProstMessage;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::gossipsub::rpc_proto::proto;
+use crate::gossipsub::rpc::proto;
 use crate::gossipsub::TopicHash;
 
 #[derive(Debug)]
@@ -137,15 +137,17 @@ pub struct RawMessage {
 impl RawMessage {
     /// Calculates the encoded length of this message (used for calculating metrics).
     pub fn raw_protobuf_len(&self) -> usize {
-        let message = proto::Message {
-            from: self.source.map(|m| m.to_bytes()),
-            data: Some(self.data.clone()),
-            seqno: self.sequence_number.map(|s| s.to_be_bytes().to_vec()),
+        let message = proto::waku::relay::v2::Message {
+            from: self.source.map(|m| Bytes::from(m.to_bytes())),
+            data: Some(Bytes::from(self.data.clone())),
+            seqno: self
+                .sequence_number
+                .map(|s| Bytes::from(s.to_be_bytes().to_vec())),
             topic: TopicHash::into_string(self.topic.clone()),
-            signature: self.signature.clone(),
-            key: self.key.clone(),
+            signature: self.signature.clone().map(Bytes::from),
+            key: self.key.clone().map(Bytes::from),
         };
-        message.get_size()
+        message.encoded_len()
     }
 }
 
@@ -251,25 +253,27 @@ pub struct Rpc {
 impl Rpc {
     /// Converts the GossipsubRPC into its protobuf format.
     // A convenience function to avoid explicitly specifying types.
-    pub fn into_protobuf(self) -> proto::RPC {
+    pub fn into_protobuf(self) -> proto::waku::relay::v2::Rpc {
         self.into()
     }
 }
 
-impl From<Rpc> for proto::RPC {
+impl From<Rpc> for proto::waku::relay::v2::Rpc {
     /// Converts the RPC into protobuf format.
     fn from(rpc: Rpc) -> Self {
         // Messages
         let mut publish = Vec::new();
 
         for message in rpc.messages.into_iter() {
-            let message = proto::Message {
-                from: message.source.map(|m| m.to_bytes()),
-                data: Some(message.data),
-                seqno: message.sequence_number.map(|s| s.to_be_bytes().to_vec()),
+            let message = proto::waku::relay::v2::Message {
+                from: message.source.map(|m| Bytes::from(m.to_bytes())),
+                data: Some(Bytes::from(message.data)),
+                seqno: message
+                    .sequence_number
+                    .map(|s| Bytes::copy_from_slice(&s.to_be_bytes())),
                 topic: TopicHash::into_string(message.topic),
-                signature: message.signature,
-                key: message.key,
+                signature: message.signature.map(Bytes::from),
+                key: message.key.map(Bytes::from),
             };
 
             publish.push(message);
@@ -279,14 +283,14 @@ impl From<Rpc> for proto::RPC {
         let subscriptions = rpc
             .subscriptions
             .into_iter()
-            .map(|sub| proto::SubOpts {
+            .map(|sub| proto::waku::relay::v2::rpc::SubOpts {
                 subscribe: Some(sub.action == SubscriptionAction::Subscribe),
                 topic_id: Some(sub.topic_hash.into_string()),
             })
             .collect::<Vec<_>>();
 
         // control messages
-        let mut control = proto::ControlMessage {
+        let mut control = proto::waku::relay::v2::ControlMessage {
             ihave: Vec::new(),
             iwant: Vec::new(),
             graft: Vec::new(),
@@ -302,20 +306,26 @@ impl From<Rpc> for proto::RPC {
                     topic_hash,
                     message_ids,
                 } => {
-                    let rpc_ihave = proto::ControlIHave {
+                    let rpc_ihave = proto::waku::relay::v2::ControlIHave {
                         topic_id: Some(topic_hash.into_string()),
-                        message_ids: message_ids.into_iter().map(|msg_id| msg_id.0).collect(),
+                        message_ids: message_ids
+                            .into_iter()
+                            .map(|msg_id| Bytes::from(msg_id.0))
+                            .collect(),
                     };
                     control.ihave.push(rpc_ihave);
                 }
                 ControlAction::IWant { message_ids } => {
-                    let rpc_iwant = proto::ControlIWant {
-                        message_ids: message_ids.into_iter().map(|msg_id| msg_id.0).collect(),
+                    let rpc_iwant = proto::waku::relay::v2::ControlIWant {
+                        message_ids: message_ids
+                            .into_iter()
+                            .map(|msg_id| Bytes::from(msg_id.0))
+                            .collect(),
                     };
                     control.iwant.push(rpc_iwant);
                 }
                 ControlAction::Graft { topic_hash } => {
-                    let rpc_graft = proto::ControlGraft {
+                    let rpc_graft = proto::waku::relay::v2::ControlGraft {
                         topic_id: Some(topic_hash.into_string()),
                     };
                     control.graft.push(rpc_graft);
@@ -325,12 +335,12 @@ impl From<Rpc> for proto::RPC {
                     peers,
                     backoff,
                 } => {
-                    let rpc_prune = proto::ControlPrune {
+                    let rpc_prune = proto::waku::relay::v2::ControlPrune {
                         topic_id: Some(topic_hash.into_string()),
                         peers: peers
                             .into_iter()
-                            .map(|info| proto::PeerInfo {
-                                peer_id: info.peer_id.map(|id| id.to_bytes()),
+                            .map(|info| proto::waku::relay::v2::PeerInfo {
+                                peer_id: info.peer_id.map(|id| Bytes::from(id.to_bytes())),
                                 /// TODO, see https://github.com/libp2p/specs/pull/217
                                 signed_peer_record: None,
                             })
@@ -342,7 +352,7 @@ impl From<Rpc> for proto::RPC {
             }
         }
 
-        proto::RPC {
+        proto::waku::relay::v2::Rpc {
             subscriptions,
             publish,
             control: if empty_control_msg {

@@ -40,7 +40,7 @@ use smallvec::SmallVec;
 use void::Void;
 
 use crate::gossipsub::protocol_priv::{GossipsubCodec, ProtocolConfig};
-use crate::gossipsub::rpc_proto::proto;
+use crate::gossipsub::rpc::proto;
 use crate::gossipsub::types::{PeerKind, RawMessage, Rpc};
 use crate::gossipsub::ValidationError;
 
@@ -66,7 +66,7 @@ pub enum HandlerEvent {
 #[derive(Debug)]
 pub enum HandlerIn {
     /// A gossipsub message to send.
-    Message(proto::RPC),
+    Message(proto::waku::relay::v2::Rpc),
     /// The peer has joined the mesh.
     JoinedMesh,
     /// The peer has left the mesh.
@@ -98,7 +98,7 @@ pub struct EnabledHandler {
     inbound_substream: Option<InboundSubstreamState>,
 
     /// Queue of values that we want to send to the remote.
-    send_queue: SmallVec<[proto::RPC; 16]>,
+    send_queue: SmallVec<[proto::waku::relay::v2::Rpc; 16]>,
 
     /// Flag indicating that an outbound substream is being established to prevent duplicate
     /// requests.
@@ -156,7 +156,10 @@ enum OutboundSubstreamState {
     /// Waiting for the user to send a message. The idle state for an outbound substream.
     WaitingOutput(Framed<NegotiatedSubstream, GossipsubCodec>),
     /// Waiting to send a message to the remote.
-    PendingSend(Framed<NegotiatedSubstream, GossipsubCodec>, proto::RPC),
+    PendingSend(
+        Framed<NegotiatedSubstream, GossipsubCodec>,
+        proto::waku::relay::v2::Rpc,
+    ),
     /// Waiting to flush the substream so that the data arrives to the remote.
     PendingFlush(Framed<NegotiatedSubstream, GossipsubCodec>),
     /// An error occurred during processing.

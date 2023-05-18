@@ -7,4 +7,3 @@ mod event;
 pub mod gossipsub;
 mod message_id;
 pub mod proto;
-pub mod rpc;

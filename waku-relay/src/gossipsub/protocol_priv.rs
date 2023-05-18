@@ -18,6 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use std::io;
 use std::pin::Pin;
 
 use asynchronous_codec::{Decoder, Encoder, Framed};
@@ -30,11 +31,11 @@ use libp2p::identity::PublicKey;
 use libp2p::PeerId;
 use libp2p::{InboundUpgrade, OutboundUpgrade};
 use log::{debug, warn};
-use quick_protobuf::Writer;
+use prost::Message;
 use unsigned_varint::codec;
 use void::Void;
 
-use waku_core::common::quick_protobuf_codec;
+use waku_core::common::{protobuf_codec, quick_protobuf_codec};
 
 use crate::gossipsub::config::{ValidationMode, Version};
 use crate::gossipsub::handler::HandlerEvent;
@@ -43,7 +44,7 @@ use crate::gossipsub::types::{
     ControlAction, MessageId, PeerInfo, PeerKind, RawMessage, Rpc, Subscription, SubscriptionAction,
 };
 use crate::gossipsub::ValidationError;
-use crate::gossipsub::{rpc_proto::proto, Config};
+use crate::gossipsub::{rpc::proto, Config};
 
 pub(crate) const SIGNING_PREFIX: &[u8] = b"libp2p-pubsub:";
 
@@ -55,7 +56,7 @@ pub struct ProtocolConfig {
     /// The maximum transmit size for a packet.
     max_transmit_size: usize,
     /// Determines the level of validation to be done on incoming messages.
-    validation_mode: crate::gossipsub::ValidationMode,
+    validation_mode: ValidationMode,
 }
 
 impl ProtocolConfig {
@@ -195,12 +196,12 @@ pub struct GossipsubCodec {
     /// Determines the level of validation performed on incoming messages.
     validation_mode: ValidationMode,
     /// The codec to handle common encoding/decoding of protobuf messages
-    codec: quick_protobuf_codec::Codec<proto::RPC>,
+    codec: protobuf_codec::Codec<proto::waku::relay::v2::Rpc>,
 }
 
 impl GossipsubCodec {
     pub fn new(length_codec: codec::UviBytes, validation_mode: ValidationMode) -> GossipsubCodec {
-        let codec = quick_protobuf_codec::Codec::new(length_codec.max_len());
+        let codec = protobuf_codec::Codec::new(length_codec.max_len());
         GossipsubCodec {
             validation_mode,
             codec,
@@ -210,9 +211,7 @@ impl GossipsubCodec {
     /// Verifies a gossipsub message. This returns either a success or failure. All errors
     /// are logged, which prevents error handling in the codec and handler. We simply drop invalid
     /// messages and log warnings, rather than propagating errors through the codec.
-    fn verify_signature(message: &proto::Message) -> bool {
-        use quick_protobuf::MessageWrite;
-
+    fn verify_signature(message: &proto::waku::relay::v2::Message) -> bool {
         let from = match message.from.as_ref() {
             Some(v) => v,
             None => {
@@ -260,11 +259,8 @@ impl GossipsubCodec {
         let mut message_sig = message.clone();
         message_sig.signature = None;
         message_sig.key = None;
-        let mut buf = Vec::with_capacity(message_sig.get_size());
-        let mut writer = Writer::new(&mut buf);
-        message_sig
-            .write_message(&mut writer)
-            .expect("Encoding to succeed");
+        let mut buf = Vec::with_capacity(message_sig.encoded_len());
+        message_sig.encode(&mut buf).expect("Encoding to succeed");
         let mut signature_bytes = SIGNING_PREFIX.to_vec();
         signature_bytes.extend_from_slice(&buf);
         public_key.verify(&signature_bytes, signature)
@@ -272,8 +268,8 @@ impl GossipsubCodec {
 }
 
 impl Encoder for GossipsubCodec {
-    type Item = proto::RPC;
-    type Error = quick_protobuf_codec::Error;
+    type Item = proto::waku::relay::v2::Rpc;
+    type Error = io::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
         self.codec.encode(item, dst)
@@ -341,11 +337,11 @@ impl Decoder for GossipsubCodec {
             if let Some(validation_error) = invalid_kind.take() {
                 let message = RawMessage {
                     source: None, // don't bother inform the application
-                    data: message.data.unwrap_or_default(),
+                    data: message.data.map(Into::into).unwrap_or_default(),
                     sequence_number: None, // don't inform the application
                     topic: TopicHash::from_raw(message.topic),
                     signature: None, // don't inform the application
-                    key: message.key,
+                    key: message.key.map(Into::into),
                     validated: false,
                 };
                 invalid_messages.push((message, validation_error));
@@ -361,11 +357,11 @@ impl Decoder for GossipsubCodec {
                 // and source)
                 let message = RawMessage {
                     source: None, // don't bother inform the application
-                    data: message.data.unwrap_or_default(),
+                    data: message.data.map(Into::into).unwrap_or_default(),
                     sequence_number: None, // don't inform the application
                     topic: TopicHash::from_raw(message.topic),
                     signature: None, // don't inform the application
-                    key: message.key,
+                    key: message.key.map(Into::into),
                     validated: false,
                 };
                 invalid_messages.push((message, ValidationError::InvalidSignature));
@@ -386,11 +382,11 @@ impl Decoder for GossipsubCodec {
                         );
                         let message = RawMessage {
                             source: None, // don't bother inform the application
-                            data: message.data.unwrap_or_default(),
+                            data: message.data.map(Into::into).unwrap_or_default(),
                             sequence_number: None, // don't inform the application
                             topic: TopicHash::from_raw(message.topic),
-                            signature: message.signature, // don't inform the application
-                            key: message.key,
+                            signature: message.signature.map(Into::into), // don't inform the application
+                            key: message.key.map(Into::into),
                             validated: false,
                         };
                         invalid_messages.push((message, ValidationError::InvalidSequenceNumber));
@@ -405,11 +401,11 @@ impl Decoder for GossipsubCodec {
                     debug!("Sequence number not present but expected");
                     let message = RawMessage {
                         source: None, // don't bother inform the application
-                        data: message.data.unwrap_or_default(),
+                        data: message.data.map(Into::into).unwrap_or_default(),
                         sequence_number: None, // don't inform the application
                         topic: TopicHash::from_raw(message.topic),
-                        signature: message.signature, // don't inform the application
-                        key: message.key,
+                        signature: message.signature.map(Into::into), // don't inform the application
+                        key: message.key.map(Into::into),
                         validated: false,
                     };
                     invalid_messages.push((message, ValidationError::EmptySequenceNumber));
@@ -431,11 +427,11 @@ impl Decoder for GossipsubCodec {
                                 debug!("Message source has an invalid PeerId");
                                 let message = RawMessage {
                                     source: None, // don't bother inform the application
-                                    data: message.data.unwrap_or_default(),
+                                    data: message.data.map(Into::into).unwrap_or_default(),
                                     sequence_number,
                                     topic: TopicHash::from_raw(message.topic),
-                                    signature: message.signature, // don't inform the application
-                                    key: message.key,
+                                    signature: message.signature.map(Into::into), // don't inform the application
+                                    key: message.key.map(Into::into),
                                     validated: false,
                                 };
                                 invalid_messages.push((message, ValidationError::InvalidPeerId));
@@ -455,11 +451,11 @@ impl Decoder for GossipsubCodec {
             // This message has passed all validation, add it to the validated messages.
             messages.push(RawMessage {
                 source,
-                data: message.data.unwrap_or_default(),
+                data: message.data.map(Into::into).unwrap_or_default(),
                 sequence_number,
                 topic: TopicHash::from_raw(message.topic),
-                signature: message.signature,
-                key: message.key,
+                signature: message.signature.map(Into::into),
+                key: message.key.map(Into::into),
                 validated: false,
             });
         }
