@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let status = Command::new("buf")
         .arg("generate")
-        .arg("https://github.com/vacp2p/waku.git#ref=25e8922")
+        .arg("https://github.com/LNSD/waku-proto.git#branch=rust-waku")
         .arg("--path")
         .arg("waku/message")
         .arg("--output")
