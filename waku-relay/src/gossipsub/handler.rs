@@ -40,7 +40,7 @@ use libp2p::swarm::NegotiatedSubstream;
 use smallvec::SmallVec;
 use void::Void;
 
-use crate::gossipsub::protocol_priv::ProtocolConfig;
+use crate::gossipsub::protocol::ProtocolConfig;
 use crate::gossipsub::rpc::proto::waku::relay::v2::Rpc as RpcProto;
 use crate::gossipsub::types::{PeerKind, RawMessage, Rpc};
 use crate::gossipsub::ValidationError;

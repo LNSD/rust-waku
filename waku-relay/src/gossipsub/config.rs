@@ -22,9 +22,8 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 
-use libp2p::PeerId;
-
-use crate::gossipsub::types::{FastMessageId, Message, MessageId, RawMessage};
+use crate::gossipsub::message_id::{default_message_id_fn, FastMessageId, MessageId};
+use crate::gossipsub::types::{Message, RawMessage};
 
 /// The types of message validation that can be employed by gossipsub.
 #[derive(Debug, Clone)]
@@ -427,20 +426,7 @@ impl Default for ConfigBuilder {
                 duplicate_cache_time: Duration::from_secs(60),
                 validate_messages: false,
                 validation_mode: ValidationMode::Strict,
-                message_id_fn: Arc::new(|message| {
-                    // default message id is: source + sequence number
-                    // NOTE: If either the peer_id or source is not provided, we set to 0;
-                    let mut source_string = if let Some(peer_id) = message.source.as_ref() {
-                        peer_id.to_base58()
-                    } else {
-                        PeerId::from_bytes(&[0, 1, 0])
-                            .expect("Valid peer id")
-                            .to_base58()
-                    };
-                    source_string
-                        .push_str(&message.sequence_number.unwrap_or_default().to_string());
-                    MessageId::new(source_string.into_bytes())
-                }),
+                message_id_fn: Arc::new(default_message_id_fn),
                 fast_message_id_fn: None,
                 allow_self_origin: false,
                 do_px: false,
