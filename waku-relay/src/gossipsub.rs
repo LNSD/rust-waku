@@ -159,6 +159,7 @@ pub use self::types::{FastMessageId, Message, MessageAcceptance, MessageId, RawM
 
 mod backoff;
 mod behaviour;
+mod codec;
 mod config;
 pub mod error;
 mod error_priv;

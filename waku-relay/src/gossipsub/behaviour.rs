@@ -50,13 +50,14 @@ use wasm_timer::Instant;
 use wasm_timer::Interval;
 
 use crate::gossipsub::backoff::BackoffStorage;
+use crate::gossipsub::codec::SIGNING_PREFIX;
 use crate::gossipsub::config::{Config, ValidationMode};
 use crate::gossipsub::gossip_promises::GossipPromises;
 use crate::gossipsub::handler::{Handler, HandlerEvent, HandlerIn};
 use crate::gossipsub::mcache::MessageCache;
 use crate::gossipsub::metrics_priv::{Churn, Config as MetricsConfig, Inclusion, Metrics, Penalty};
 use crate::gossipsub::peer_score::{PeerScore, PeerScoreParams, PeerScoreThresholds, RejectReason};
-use crate::gossipsub::protocol_priv::{ProtocolConfig, SIGNING_PREFIX};
+use crate::gossipsub::protocol_priv::ProtocolConfig;
 use crate::gossipsub::rpc::proto::waku::relay::v2::{
     ControlMessage as ControlMessageProto, Message as MessageProto, Rpc as RpcProto,
 };
@@ -543,7 +544,7 @@ where
         // send subscription request to all peers
         let peer_list = self.peer_topics.keys().cloned().collect::<Vec<_>>();
         if !peer_list.is_empty() {
-            let event = Rpc {
+            let event: RpcProto = Rpc {
                 messages: Vec::new(),
                 subscriptions: vec![Subscription {
                     topic_hash: topic_hash.clone(),
@@ -551,7 +552,7 @@ where
                 }],
                 control_msgs: Vec::new(),
             }
-            .into_protobuf();
+            .into();
 
             for peer in peer_list {
                 debug!("Sending SUBSCRIBE to peer: {:?}", peer);
@@ -583,7 +584,7 @@ where
         // announce to all peers
         let peer_list = self.peer_topics.keys().cloned().collect::<Vec<_>>();
         if !peer_list.is_empty() {
-            let event = Rpc {
+            let event: RpcProto = Rpc {
                 messages: Vec::new(),
                 subscriptions: vec![Subscription {
                     topic_hash: topic_hash.clone(),
@@ -591,7 +592,7 @@ where
                 }],
                 control_msgs: Vec::new(),
             }
-            .into_protobuf();
+            .into();
 
             for peer in peer_list {
                 debug!("Sending UNSUBSCRIBE to peer: {}", peer.to_string());
@@ -631,12 +632,12 @@ where
             topic: raw_message.topic.clone(),
         });
 
-        let event = Rpc {
+        let event: RpcProto = Rpc {
             subscriptions: Vec::new(),
             messages: vec![raw_message.clone()],
             control_msgs: Vec::new(),
         }
-        .into_protobuf();
+        .into();
 
         // check that the size doesn't exceed the max transmission size
         if event.encoded_len() > self.config.max_transmit_size() {
@@ -1360,12 +1361,12 @@ where
                 .map(|message| message.topic.clone())
                 .collect::<HashSet<TopicHash>>();
 
-            let message = Rpc {
+            let message: RpcProto = Rpc {
                 subscriptions: Vec::new(),
                 messages: message_list,
                 control_msgs: Vec::new(),
             }
-            .into_protobuf();
+            .into();
 
             let msg_bytes = message.encoded_len();
 
@@ -1540,7 +1541,7 @@ where
                     messages: Vec::new(),
                     control_msgs: prune_messages,
                 }
-                .into_protobuf(),
+                .into(),
             ) {
                 error!("Failed to send PRUNE: {:?}", e);
             }
@@ -2083,7 +2084,7 @@ where
                             .map(|topic_hash| ControlAction::Graft { topic_hash })
                             .collect(),
                     }
-                    .into_protobuf(),
+                    .into(),
                 )
                 .is_err()
         {
@@ -2649,7 +2650,7 @@ where
                         messages: Vec::new(),
                         control_msgs,
                     }
-                    .into_protobuf(),
+                    .into(),
                 )
                 .is_err()
             {
@@ -2689,7 +2690,7 @@ where
                         messages: Vec::new(),
                         control_msgs: remaining_prunes,
                     }
-                    .into_protobuf(),
+                    .into(),
                 )
                 .is_err()
             {
@@ -2718,9 +2719,8 @@ where
         debug!("Forwarding message: {:?}", msg_id);
         let mut recipient_peers = HashSet::new();
 
+        // Populate the recipient peers mapping
         {
-            // Populate the recipient peers mapping
-
             // Add explicit peers
             for peer_id in &self.explicit_peers {
                 if let Some(topics) = self.peer_topics.get(peer_id) {
@@ -2751,12 +2751,12 @@ where
 
         // forward the message to peers
         if !recipient_peers.is_empty() {
-            let event = Rpc {
+            let event: RpcProto = Rpc {
                 subscriptions: Vec::new(),
                 messages: vec![message.clone()],
                 control_msgs: Vec::new(),
             }
-            .into_protobuf();
+            .into();
 
             let msg_bytes = event.encoded_len();
             for peer in recipient_peers.iter() {
@@ -2884,7 +2884,7 @@ where
                         messages: Vec::new(),
                         control_msgs: controls,
                     }
-                    .into_protobuf(),
+                    .into(),
                 )
                 .is_err()
             {
@@ -3107,7 +3107,7 @@ where
                                 subscriptions,
                                 control_msgs: Vec::new(),
                             }
-                            .into_protobuf(),
+                            .into(),
                         )
                         .is_err()
                     {
@@ -3333,6 +3333,27 @@ where
         ))
     }
 
+    fn on_swarm_event(&mut self, event: FromSwarm<Self::ConnectionHandler>) {
+        match event {
+            FromSwarm::ConnectionEstablished(connection_established) => {
+                self.on_connection_established(connection_established)
+            }
+            FromSwarm::ConnectionClosed(connection_closed) => {
+                self.on_connection_closed(connection_closed)
+            }
+            FromSwarm::AddressChange(address_change) => self.on_address_change(address_change),
+            FromSwarm::DialFailure(_)
+            | FromSwarm::ListenFailure(_)
+            | FromSwarm::NewListener(_)
+            | FromSwarm::NewListenAddr(_)
+            | FromSwarm::ExpiredListenAddr(_)
+            | FromSwarm::ListenerError(_)
+            | FromSwarm::ListenerClosed(_)
+            | FromSwarm::NewExternalAddr(_)
+            | FromSwarm::ExpiredExternalAddr(_) => {}
+        }
+    }
+
     fn on_connection_handler_event(
         &mut self,
         propagation_source: PeerId,
@@ -3480,27 +3501,6 @@ where
         }
 
         Poll::Pending
-    }
-
-    fn on_swarm_event(&mut self, event: FromSwarm<Self::ConnectionHandler>) {
-        match event {
-            FromSwarm::ConnectionEstablished(connection_established) => {
-                self.on_connection_established(connection_established)
-            }
-            FromSwarm::ConnectionClosed(connection_closed) => {
-                self.on_connection_closed(connection_closed)
-            }
-            FromSwarm::AddressChange(address_change) => self.on_address_change(address_change),
-            FromSwarm::DialFailure(_)
-            | FromSwarm::ListenFailure(_)
-            | FromSwarm::NewListener(_)
-            | FromSwarm::NewListenAddr(_)
-            | FromSwarm::ExpiredListenAddr(_)
-            | FromSwarm::ListenerError(_)
-            | FromSwarm::ListenerClosed(_)
-            | FromSwarm::NewExternalAddr(_)
-            | FromSwarm::ExpiredExternalAddr(_) => {}
-        }
     }
 }
 
