@@ -1,8 +1,10 @@
+use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
+use libp2p::PeerId;
 
 use crate::gossipsub::rpc::proto::waku::relay::v2::{
     rpc::SubOpts as SubOptsProto, ControlGraft as ControlGraftProto,
-    ControlIHave as ControlIHaveProto, ControlIWant as ControlIWantProto,
+    ControlIHave as ControlIHaveProto, ControlIHave, ControlIWant as ControlIWantProto,
     ControlMessage as ControlMessageProto, ControlPrune as ControlPruneProto,
     Message as MessageProto, PeerInfo as PeerInfoProto, Rpc as RpcProto,
 };
@@ -21,6 +23,22 @@ impl From<RawMessage> for MessageProto {
             topic: TopicHash::into_string(msg.topic),
             signature: msg.signature.map(Bytes::from),
             key: msg.key.map(Bytes::from),
+        }
+    }
+}
+
+impl From<MessageProto> for RawMessage {
+    fn from(msg: MessageProto) -> Self {
+        Self {
+            source: msg
+                .from
+                .map(|b| PeerId::from_bytes(&b).expect("PeerId to be valid")),
+            data: msg.data.map(Into::into).unwrap_or_default(),
+            sequence_number: msg.seqno.as_ref().map(|v| BigEndian::read_u64(v)),
+            topic: TopicHash::from_raw(msg.topic),
+            signature: msg.signature.map(Into::into),
+            key: msg.key.map(Into::into),
+            validated: false,
         }
     }
 }
@@ -56,6 +74,18 @@ impl From<PeerInfo> for PeerInfoProto {
             /// TODO, see https://github.com/libp2p/specs/pull/217
             signed_peer_record: None,
         }
+    }
+}
+
+impl TryFrom<PeerInfoProto> for PeerInfo {
+    type Error = anyhow::Error;
+
+    fn try_from(info: PeerInfoProto) -> Result<Self, Self::Error> {
+        let peer_id = info.peer_id.unwrap();
+        let peer_id = PeerId::from_bytes(&peer_id[..])?;
+        Ok(Self {
+            peer_id: Some(peer_id),
+        })
     }
 }
 
@@ -111,6 +141,49 @@ impl FromIterator<ControlAction> for ControlMessageProto {
         }
 
         control
+    }
+}
+
+impl From<ControlIHaveProto> for ControlAction {
+    fn from(ihave: ControlIHave) -> Self {
+        Self::IHave {
+            topic_hash: TopicHash::from_raw(ihave.topic_id.unwrap_or_default()),
+            message_ids: ihave.message_ids.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ControlIWantProto> for ControlAction {
+    fn from(iwant: ControlIWantProto) -> Self {
+        Self::IWant {
+            message_ids: iwant.message_ids.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ControlGraftProto> for ControlAction {
+    fn from(graft: ControlGraftProto) -> Self {
+        Self::Graft {
+            topic_hash: TopicHash::from_raw(graft.topic_id.unwrap_or_default()),
+        }
+    }
+}
+
+impl From<ControlPruneProto> for ControlAction {
+    fn from(prune: ControlPruneProto) -> Self {
+        let peers = prune
+            .peers
+            .into_iter()
+            .filter_map(|info| PeerInfo::try_from(info).ok()) // filter out invalid peers
+            .collect();
+
+        let topic_hash = TopicHash::from_raw(prune.topic_id.unwrap_or_default());
+
+        Self::Prune {
+            topic_hash,
+            peers,
+            backoff: prune.backoff,
+        }
     }
 }
 

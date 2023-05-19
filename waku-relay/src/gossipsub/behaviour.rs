@@ -71,8 +71,9 @@ use crate::gossipsub::types::{
     SubscriptionAction,
 };
 use crate::gossipsub::types::{PeerConnections, PeerKind, Rpc};
+use crate::gossipsub::validation::ValidationError;
 use crate::gossipsub::{FastMessageId, TopicScoreParams};
-use crate::gossipsub::{PublishError, SubscriptionError, ValidationError};
+use crate::gossipsub::{PublishError, SubscriptionError};
 
 /// A data structure for storing configuration for publishing messages. See [`MessageAuthenticity`]
 /// for further details.

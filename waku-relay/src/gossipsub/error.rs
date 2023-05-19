@@ -20,11 +20,11 @@
 
 //! Error types that can result from gossipsub.
 
+use std::io;
+
 use libp2p::core::upgrade::ProtocolError;
 use libp2p::identity::SigningError;
 use thiserror::Error;
-
-use waku_core::common::quick_protobuf_codec;
 
 /// Error associated with publishing a gossipsub message.
 #[derive(Debug)]
@@ -102,39 +102,8 @@ pub enum HandlerError {
     #[error("Protocol negotiation failed.")]
     NegotiationProtocolError(ProtocolError),
     #[error("Failed to encode or decode")]
-    Codec(#[from] quick_protobuf_codec::Error),
+    Codec(#[from] io::Error),
 }
-
-#[derive(Debug, Clone, Copy)]
-pub enum ValidationError {
-    /// The message has an invalid signature,
-    InvalidSignature,
-    /// The sequence number was empty, expected a value.
-    EmptySequenceNumber,
-    /// The sequence number was the incorrect size
-    InvalidSequenceNumber,
-    /// The PeerId was invalid
-    InvalidPeerId,
-    /// Signature existed when validation has been sent to
-    /// [`crate::behaviour::MessageAuthenticity::Anonymous`].
-    SignaturePresent,
-    /// Sequence number existed when validation has been sent to
-    /// [`crate::behaviour::MessageAuthenticity::Anonymous`].
-    SequenceNumberPresent,
-    /// Message source existed when validation has been sent to
-    /// [`crate::behaviour::MessageAuthenticity::Anonymous`].
-    MessageSourcePresent,
-    /// The data transformation failed.
-    TransformFailed,
-}
-
-impl std::fmt::Display for ValidationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-
-impl std::error::Error for ValidationError {}
 
 impl From<std::io::Error> for PublishError {
     fn from(error: std::io::Error) -> PublishError {

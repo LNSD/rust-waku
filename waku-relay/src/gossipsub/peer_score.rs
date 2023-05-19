@@ -36,7 +36,7 @@ pub use params::{
 
 use crate::gossipsub::metrics::{Metrics, Penalty};
 use crate::gossipsub::time_cache::TimeCache;
-use crate::gossipsub::ValidationError;
+use crate::gossipsub::validation::ValidationError;
 use crate::gossipsub::{MessageId, TopicHash};
 
 mod params;

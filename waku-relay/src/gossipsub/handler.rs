@@ -43,7 +43,7 @@ use void::Void;
 use crate::gossipsub::protocol::ProtocolConfig;
 use crate::gossipsub::rpc::proto::waku::relay::v2::Rpc as RpcProto;
 use crate::gossipsub::types::{PeerKind, RawMessage, Rpc};
-use crate::gossipsub::ValidationError;
+use crate::gossipsub::validation::ValidationError;
 
 /// The event emitted by the Handler. This informs the behaviour of various events created
 /// by the handler.
