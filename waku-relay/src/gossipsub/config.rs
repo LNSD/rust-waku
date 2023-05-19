@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use std::borrow::Cow;
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -395,6 +396,50 @@ impl Default for Config {
         ConfigBuilder::default()
             .build()
             .expect("Default config parameters should be valid parameters")
+    }
+}
+
+impl fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut builder = f.debug_struct("GossipsubConfig");
+        let _ = builder.field("protocol_id", &self.protocol_id);
+        let _ = builder.field("custom_id_version", &self.custom_id_version);
+        let _ = builder.field("history_length", &self.history_length);
+        let _ = builder.field("history_gossip", &self.history_gossip);
+        let _ = builder.field("mesh_n", &self.mesh_n);
+        let _ = builder.field("mesh_n_low", &self.mesh_n_low);
+        let _ = builder.field("mesh_n_high", &self.mesh_n_high);
+        let _ = builder.field("retain_scores", &self.retain_scores);
+        let _ = builder.field("gossip_lazy", &self.gossip_lazy);
+        let _ = builder.field("gossip_factor", &self.gossip_factor);
+        let _ = builder.field("heartbeat_initial_delay", &self.heartbeat_initial_delay);
+        let _ = builder.field("heartbeat_interval", &self.heartbeat_interval);
+        let _ = builder.field("fanout_ttl", &self.fanout_ttl);
+        let _ = builder.field("max_transmit_size", &self.max_transmit_size);
+        let _ = builder.field("idle_timeout", &self.idle_timeout);
+        let _ = builder.field("duplicate_cache_time", &self.duplicate_cache_time);
+        let _ = builder.field("validate_messages", &self.validate_messages);
+        let _ = builder.field("validation_mode", &self.validation_mode);
+        let _ = builder.field("allow_self_origin", &self.allow_self_origin);
+        let _ = builder.field("do_px", &self.do_px);
+        let _ = builder.field("prune_peers", &self.prune_peers);
+        let _ = builder.field("prune_backoff", &self.prune_backoff);
+        let _ = builder.field("backoff_slack", &self.backoff_slack);
+        let _ = builder.field("flood_publish", &self.flood_publish);
+        let _ = builder.field("graft_flood_threshold", &self.graft_flood_threshold);
+        let _ = builder.field("mesh_outbound_min", &self.mesh_outbound_min);
+        let _ = builder.field("opportunistic_graft_ticks", &self.opportunistic_graft_ticks);
+        let _ = builder.field("opportunistic_graft_peers", &self.opportunistic_graft_peers);
+        let _ = builder.field("max_messages_per_rpc", &self.max_messages_per_rpc);
+        let _ = builder.field("max_ihave_length", &self.max_ihave_length);
+        let _ = builder.field("max_ihave_messages", &self.max_ihave_messages);
+        let _ = builder.field("iwant_followup_time", &self.iwant_followup_time);
+        let _ = builder.field("support_floodsub", &self.support_floodsub);
+        let _ = builder.field(
+            "published_message_ids_cache_time",
+            &self.published_message_ids_cache_time,
+        );
+        builder.finish()
     }
 }
 
@@ -787,15 +832,18 @@ impl ConfigBuilder {
     }
 
     /// Constructs a [`Config`] from the given configuration and validates the settings.
-    pub fn build(&self) -> Result<Config, &'static str> {
+    pub fn build(&self) -> anyhow::Result<Config> {
         // check all constraints on config
 
         if self.config.max_transmit_size < 100 {
-            return Err("The maximum transmission size must be greater than 100 to permit basic control messages");
+            anyhow::bail!(
+                "The maximum transmission size must be greater than 100 to permit basic \
+                control messages"
+            );
         }
 
         if self.config.history_length < self.config.history_gossip {
-            return Err(
+            anyhow::bail!(
                 "The history_length must be greater than or equal to the history_gossip \
                 length",
             );
@@ -805,64 +853,23 @@ impl ConfigBuilder {
             && self.config.mesh_n_low <= self.config.mesh_n
             && self.config.mesh_n <= self.config.mesh_n_high)
         {
-            return Err("The following inequality doesn't hold \
-                mesh_outbound_min <= mesh_n_low <= mesh_n <= mesh_n_high");
+            anyhow::bail!(
+                "The following inequality doesn't hold \
+                mesh_outbound_min <= mesh_n_low <= mesh_n <= mesh_n_high"
+            );
         }
 
         if self.config.mesh_outbound_min * 2 > self.config.mesh_n {
-            return Err(
-                "The following inequality doesn't hold mesh_outbound_min <= self.config.mesh_n / 2",
+            anyhow::bail!(
+                "The following inequality doesn't hold \
+                mesh_outbound_min <= self.config.mesh_n / 2",
             );
         }
 
         if self.config.unsubscribe_backoff.as_millis() == 0 {
-            return Err("The unsubscribe_backoff parameter should be positive.");
+            anyhow::bail!("The unsubscribe_backoff parameter should be positive.");
         }
 
         Ok(self.config.clone())
-    }
-}
-
-impl std::fmt::Debug for Config {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut builder = f.debug_struct("GossipsubConfig");
-        let _ = builder.field("protocol_id", &self.protocol_id);
-        let _ = builder.field("custom_id_version", &self.custom_id_version);
-        let _ = builder.field("history_length", &self.history_length);
-        let _ = builder.field("history_gossip", &self.history_gossip);
-        let _ = builder.field("mesh_n", &self.mesh_n);
-        let _ = builder.field("mesh_n_low", &self.mesh_n_low);
-        let _ = builder.field("mesh_n_high", &self.mesh_n_high);
-        let _ = builder.field("retain_scores", &self.retain_scores);
-        let _ = builder.field("gossip_lazy", &self.gossip_lazy);
-        let _ = builder.field("gossip_factor", &self.gossip_factor);
-        let _ = builder.field("heartbeat_initial_delay", &self.heartbeat_initial_delay);
-        let _ = builder.field("heartbeat_interval", &self.heartbeat_interval);
-        let _ = builder.field("fanout_ttl", &self.fanout_ttl);
-        let _ = builder.field("max_transmit_size", &self.max_transmit_size);
-        let _ = builder.field("idle_timeout", &self.idle_timeout);
-        let _ = builder.field("duplicate_cache_time", &self.duplicate_cache_time);
-        let _ = builder.field("validate_messages", &self.validate_messages);
-        let _ = builder.field("validation_mode", &self.validation_mode);
-        let _ = builder.field("allow_self_origin", &self.allow_self_origin);
-        let _ = builder.field("do_px", &self.do_px);
-        let _ = builder.field("prune_peers", &self.prune_peers);
-        let _ = builder.field("prune_backoff", &self.prune_backoff);
-        let _ = builder.field("backoff_slack", &self.backoff_slack);
-        let _ = builder.field("flood_publish", &self.flood_publish);
-        let _ = builder.field("graft_flood_threshold", &self.graft_flood_threshold);
-        let _ = builder.field("mesh_outbound_min", &self.mesh_outbound_min);
-        let _ = builder.field("opportunistic_graft_ticks", &self.opportunistic_graft_ticks);
-        let _ = builder.field("opportunistic_graft_peers", &self.opportunistic_graft_peers);
-        let _ = builder.field("max_messages_per_rpc", &self.max_messages_per_rpc);
-        let _ = builder.field("max_ihave_length", &self.max_ihave_length);
-        let _ = builder.field("max_ihave_messages", &self.max_ihave_messages);
-        let _ = builder.field("iwant_followup_time", &self.iwant_followup_time);
-        let _ = builder.field("support_floodsub", &self.support_floodsub);
-        let _ = builder.field(
-            "published_message_ids_cache_time",
-            &self.published_message_ids_cache_time,
-        );
-        builder.finish()
     }
 }

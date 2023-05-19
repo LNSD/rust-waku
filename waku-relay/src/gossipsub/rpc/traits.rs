@@ -35,6 +35,19 @@ impl From<Subscription> for SubOptsProto {
     }
 }
 
+impl From<SubOptsProto> for Subscription {
+    fn from(sub: SubOptsProto) -> Self {
+        Self {
+            action: if Some(true) == sub.subscribe {
+                SubscriptionAction::Subscribe
+            } else {
+                SubscriptionAction::Unsubscribe
+            },
+            topic_hash: TopicHash::from_raw(sub.topic_id.unwrap_or_default()),
+        }
+    }
+}
+
 impl From<PeerInfo> for PeerInfoProto {
     /// Converts the peer info into protobuf format.
     fn from(info: PeerInfo) -> Self {
