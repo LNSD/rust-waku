@@ -19,17 +19,15 @@
 // DEALINGS IN THE SOFTWARE.
 
 use std::collections::hash_map::Entry;
-use std::fmt::Debug;
-use std::{
-    collections::{HashMap, HashSet},
-    fmt,
-};
+use std::collections::{HashMap, HashSet};
+use std::fmt;
 
 use libp2p::PeerId;
 use log::{debug, trace};
 
+use crate::gossipsub::message_id::MessageId;
 use crate::gossipsub::topic::TopicHash;
-use crate::gossipsub::types::{MessageId, RawMessage};
+use crate::gossipsub::types::RawMessage;
 
 /// CacheEntry stored in the history.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

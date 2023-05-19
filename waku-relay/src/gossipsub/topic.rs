@@ -35,7 +35,8 @@ pub trait Hasher {
 
 /// A type for representing topics who use the identity hash.
 #[derive(Debug, Clone)]
-pub struct IdentityHash {}
+pub struct IdentityHash;
+
 impl Hasher for IdentityHash {
     /// Creates a [`TopicHash`] as a raw string.
     fn hash(topic_string: String) -> TopicHash {
@@ -71,7 +72,7 @@ pub struct TopicHash {
 }
 
 impl TopicHash {
-    pub fn from_raw(hash: impl Into<String>) -> TopicHash {
+    pub fn from_raw<T: Into<String>>(hash: T) -> TopicHash {
         TopicHash { hash: hash.into() }
     }
 
@@ -98,7 +99,7 @@ impl<H: Hasher> From<Topic<H>> for TopicHash {
 }
 
 impl<H: Hasher> Topic<H> {
-    pub fn new(topic: impl Into<String>) -> Self {
+    pub fn new<T: Into<String>>(topic: T) -> Self {
         Topic {
             topic: topic.into(),
             phantom_data: std::marker::PhantomData,

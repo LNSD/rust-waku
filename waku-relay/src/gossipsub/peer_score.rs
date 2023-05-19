@@ -30,14 +30,14 @@ use log::{debug, trace, warn};
 use wasm_timer::Instant;
 
 pub use params::{
-    PeerScoreParams, PeerScoreThresholds, score_parameter_decay, score_parameter_decay_with_base,
+    score_parameter_decay, score_parameter_decay_with_base, PeerScoreParams, PeerScoreThresholds,
     TopicScoreParams,
 };
 
-use crate::gossipsub::{MessageId, TopicHash};
-use crate::gossipsub::metrics_priv::{Metrics, Penalty};
-use crate::gossipsub::time_cache_priv::TimeCache;
+use crate::gossipsub::metrics::{Metrics, Penalty};
+use crate::gossipsub::time_cache::TimeCache;
 use crate::gossipsub::ValidationError;
+use crate::gossipsub::{MessageId, TopicHash};
 
 mod params;
 

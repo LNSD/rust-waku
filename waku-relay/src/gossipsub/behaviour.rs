@@ -18,13 +18,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{cmp::Ordering::Equal, fmt::Debug};
+use std::cmp::Ordering::Equal;
+use std::fmt;
 use std::{
     cmp::{max, Ordering},
     collections::HashSet,
     collections::VecDeque,
     collections::{BTreeSet, HashMap},
-    fmt,
     net::IpAddr,
     task::{Context, Poll},
     time::Duration,
@@ -55,25 +55,39 @@ use crate::gossipsub::config::{Config, ValidationMode};
 use crate::gossipsub::gossip_promises::GossipPromises;
 use crate::gossipsub::handler::{Handler, HandlerEvent, HandlerIn};
 use crate::gossipsub::mcache::MessageCache;
-use crate::gossipsub::metrics_priv::{Churn, Config as MetricsConfig, Inclusion, Metrics, Penalty};
+use crate::gossipsub::message_id::MessageId;
+use crate::gossipsub::metrics::{Churn, Config as MetricsConfig, Inclusion, Metrics, Penalty};
 use crate::gossipsub::peer_score::{PeerScore, PeerScoreParams, PeerScoreThresholds, RejectReason};
-use crate::gossipsub::protocol_priv::ProtocolConfig;
+use crate::gossipsub::protocol::ProtocolConfig;
 use crate::gossipsub::rpc::proto::waku::relay::v2::{
     ControlMessage as ControlMessageProto, Message as MessageProto, Rpc as RpcProto,
 };
-use crate::gossipsub::subscription_filter_priv::{
-    AllowAllSubscriptionFilter, TopicSubscriptionFilter,
-};
-use crate::gossipsub::time_cache_priv::{DuplicateCache, TimeCache};
+use crate::gossipsub::subscription_filter::{AllowAllSubscriptionFilter, TopicSubscriptionFilter};
+use crate::gossipsub::time_cache::{DuplicateCache, TimeCache};
 use crate::gossipsub::topic::{Hasher, Topic, TopicHash};
 use crate::gossipsub::transform::{DataTransform, IdentityTransform};
 use crate::gossipsub::types::{
-    ControlAction, FastMessageId, Message, MessageAcceptance, MessageId, PeerInfo, RawMessage,
-    Subscription, SubscriptionAction,
+    ControlAction, Message, MessageAcceptance, PeerInfo, RawMessage, Subscription,
+    SubscriptionAction,
 };
 use crate::gossipsub::types::{PeerConnections, PeerKind, Rpc};
-use crate::gossipsub::TopicScoreParams;
+use crate::gossipsub::{FastMessageId, TopicScoreParams};
 use crate::gossipsub::{PublishError, SubscriptionError, ValidationError};
+
+/// A data structure for storing configuration for publishing messages. See [`MessageAuthenticity`]
+/// for further details.
+#[allow(clippy::large_enum_variant)]
+enum PublishConfig {
+    Signing {
+        keypair: Keypair,
+        author: PeerId,
+        inline_key: Option<Vec<u8>>,
+        last_seq_no: SequenceNumber,
+    },
+    Author(PeerId),
+    RandomAuthor,
+    Anonymous,
+}
 
 /// Determines if published messages should be signed or not.
 ///
@@ -119,84 +133,27 @@ impl MessageAuthenticity {
     }
 }
 
-/// Event that can be emitted by the gossipsub behaviour.
-#[derive(Debug)]
-pub enum Event {
-    /// A message has been received.
-    Message {
-        /// The peer that forwarded us this message.
-        propagation_source: PeerId,
-        /// The [`MessageId`] of the message. This should be referenced by the application when
-        /// validating a message (if required).
-        message_id: MessageId,
-        /// The decompressed message itself.
-        message: Message,
-    },
-    /// A remote subscribed to a topic.
-    Subscribed {
-        /// Remote that has subscribed.
-        peer_id: PeerId,
-        /// The topic it has subscribed to.
-        topic: TopicHash,
-    },
-    /// A remote unsubscribed from a topic.
-    Unsubscribed {
-        /// Remote that has unsubscribed.
-        peer_id: PeerId,
-        /// The topic it has subscribed from.
-        topic: TopicHash,
-    },
-    /// A peer that does not support gossipsub has connected.
-    GossipsubNotSupported { peer_id: PeerId },
-}
-
-/// A data structure for storing configuration for publishing messages. See [`MessageAuthenticity`]
-/// for further details.
-#[allow(clippy::large_enum_variant)]
-enum PublishConfig {
-    Signing {
-        keypair: Keypair,
-        author: PeerId,
-        inline_key: Option<Vec<u8>>,
-        last_seq_no: SequenceNumber,
-    },
-    Author(PeerId),
-    RandomAuthor,
-    Anonymous,
-}
-
-/// A strictly linearly increasing sequence number.
-///
-/// We start from the current time as unix timestamp in milliseconds.
-#[derive(Debug)]
-struct SequenceNumber(u64);
-
-impl SequenceNumber {
-    fn new() -> Self {
-        let unix_timestamp = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("time to be linear")
-            .as_nanos();
-
-        Self(unix_timestamp as u64)
-    }
-
-    fn next(&mut self) -> u64 {
-        self.0 = self
-            .0
-            .checked_add(1)
-            .expect("to not exhaust u64 space for sequence numbers");
-
-        self.0
-    }
-}
-
 impl PublishConfig {
     pub(crate) fn get_own_id(&self) -> Option<&PeerId> {
         match self {
             Self::Signing { author, .. } => Some(author),
             Self::Author(author) => Some(author),
             _ => None,
+        }
+    }
+}
+
+impl fmt::Debug for PublishConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PublishConfig::Signing { author, .. } => {
+                f.write_fmt(format_args!("PublishConfig::Signing({author})"))
+            }
+            PublishConfig::Author(author) => {
+                f.write_fmt(format_args!("PublishConfig::Author({author})"))
+            }
+            PublishConfig::RandomAuthor => f.write_fmt(format_args!("PublishConfig::RandomAuthor")),
+            PublishConfig::Anonymous => f.write_fmt(format_args!("PublishConfig::Anonymous")),
         }
     }
 }
@@ -228,6 +185,236 @@ impl From<MessageAuthenticity> for PublishConfig {
             MessageAuthenticity::Anonymous => PublishConfig::Anonymous,
         }
     }
+}
+
+/// A strictly linearly increasing sequence number.
+///
+/// We start from the current time as unix timestamp in milliseconds.
+#[derive(Debug)]
+struct SequenceNumber(u64);
+
+impl SequenceNumber {
+    fn new() -> Self {
+        let unix_timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("time to be linear")
+            .as_nanos();
+
+        Self(unix_timestamp as u64)
+    }
+
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .checked_add(1)
+            .expect("to not exhaust u64 space for sequence numbers");
+
+        self.0
+    }
+}
+
+/// Event that can be emitted by the gossipsub behaviour.
+#[derive(Debug)]
+pub enum Event {
+    /// A message has been received.
+    Message {
+        /// The peer that forwarded us this message.
+        propagation_source: PeerId,
+        /// The [`MessageId`] of the message. This should be referenced by the application when
+        /// validating a message (if required).
+        message_id: MessageId,
+        /// The decompressed message itself.
+        message: Message,
+    },
+    /// A remote subscribed to a topic.
+    Subscribed {
+        /// Remote that has subscribed.
+        peer_id: PeerId,
+        /// The topic it has subscribed to.
+        topic: TopicHash,
+    },
+    /// A remote unsubscribed from a topic.
+    Unsubscribed {
+        /// Remote that has unsubscribed.
+        peer_id: PeerId,
+        /// The topic it has subscribed from.
+        topic: TopicHash,
+    },
+    /// A peer that does not support gossipsub has connected.
+    GossipsubNotSupported { peer_id: PeerId },
+}
+
+fn get_ip_addr(addr: &Multiaddr) -> Option<IpAddr> {
+    addr.iter().find_map(|p| match p {
+        Ip4(addr) => Some(IpAddr::V4(addr)),
+        Ip6(addr) => Some(IpAddr::V6(addr)),
+        _ => None,
+    })
+}
+
+/// This is called when peers are added to any mesh. It checks if the peer existed
+/// in any other mesh. If this is the first mesh they have joined, it queues a message to notify
+/// the appropriate connection handler to maintain a connection.
+fn peer_added_to_mesh(
+    peer_id: PeerId,
+    new_topics: Vec<&TopicHash>,
+    mesh: &HashMap<TopicHash, BTreeSet<PeerId>>,
+    known_topics: Option<&BTreeSet<TopicHash>>,
+    events: &mut VecDeque<ToSwarm<Event, HandlerIn>>,
+    connections: &HashMap<PeerId, PeerConnections>,
+) {
+    // Ensure there is an active connection
+    let connection_id = {
+        let conn = connections.get(&peer_id).expect("To be connected to peer.");
+        assert!(
+            !conn.connections.is_empty(),
+            "Must have at least one connection"
+        );
+        conn.connections[0]
+    };
+
+    if let Some(topics) = known_topics {
+        for topic in topics {
+            if !new_topics.contains(&topic) {
+                if let Some(mesh_peers) = mesh.get(topic) {
+                    if mesh_peers.contains(&peer_id) {
+                        // the peer is already in a mesh for another topic
+                        return;
+                    }
+                }
+            }
+        }
+    }
+    // This is the first mesh the peer has joined, inform the handler
+    events.push_back(ToSwarm::NotifyHandler {
+        peer_id,
+        event: HandlerIn::JoinedMesh,
+        handler: NotifyHandler::One(connection_id),
+    });
+}
+
+/// This is called when peers are removed from a mesh. It checks if the peer exists
+/// in any other mesh. If this is the last mesh they have joined, we return true, in order to
+/// notify the handler to no longer maintain a connection.
+fn peer_removed_from_mesh(
+    peer_id: PeerId,
+    old_topic: &TopicHash,
+    mesh: &HashMap<TopicHash, BTreeSet<PeerId>>,
+    known_topics: Option<&BTreeSet<TopicHash>>,
+    events: &mut VecDeque<ToSwarm<Event, HandlerIn>>,
+    connections: &HashMap<PeerId, PeerConnections>,
+) {
+    // Ensure there is an active connection
+    let connection_id = connections
+        .get(&peer_id)
+        .expect("To be connected to peer.")
+        .connections
+        .get(0)
+        .expect("There should be at least one connection to a peer.");
+
+    if let Some(topics) = known_topics {
+        for topic in topics {
+            if topic != old_topic {
+                if let Some(mesh_peers) = mesh.get(topic) {
+                    if mesh_peers.contains(&peer_id) {
+                        // the peer exists in another mesh still
+                        return;
+                    }
+                }
+            }
+        }
+    }
+    // The peer is not in any other mesh, inform the handler
+    events.push_back(ToSwarm::NotifyHandler {
+        peer_id,
+        event: HandlerIn::LeftMesh,
+        handler: NotifyHandler::One(*connection_id),
+    });
+}
+
+/// Helper function to get a subset of random gossipsub peers for a `topic_hash`
+/// filtered by the function `f`. The number of peers to get equals the output of `n_map`
+/// that gets as input the number of filtered peers.
+fn get_random_peers_dynamic(
+    topic_peers: &HashMap<TopicHash, BTreeSet<PeerId>>,
+    connected_peers: &HashMap<PeerId, PeerConnections>,
+    topic_hash: &TopicHash,
+    // maps the number of total peers to the number of selected peers
+    n_map: impl Fn(usize) -> usize,
+    mut f: impl FnMut(&PeerId) -> bool,
+) -> BTreeSet<PeerId> {
+    let mut gossip_peers = match topic_peers.get(topic_hash) {
+        // if they exist, filter the peers by `f`
+        Some(peer_list) => peer_list
+            .iter()
+            .cloned()
+            .filter(|p| {
+                f(p) && match connected_peers.get(p) {
+                    Some(connections) if connections.kind == PeerKind::Gossipsub => true,
+                    Some(connections) if connections.kind == PeerKind::Gossipsubv1_1 => true,
+                    _ => false,
+                }
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+
+    // if we have less than needed, return them
+    let n = n_map(gossip_peers.len());
+    if gossip_peers.len() <= n {
+        debug!("RANDOM PEERS: Got {:?} peers", gossip_peers.len());
+        return gossip_peers.into_iter().collect();
+    }
+
+    // we have more peers than needed, shuffle them and return n of them
+    let mut rng = thread_rng();
+    gossip_peers.partial_shuffle(&mut rng, n);
+
+    debug!("RANDOM PEERS: Got {:?} peers", n);
+
+    gossip_peers.into_iter().take(n).collect()
+}
+
+/// Helper function to get a set of `n` random gossipsub peers for a `topic_hash`
+/// filtered by the function `f`.
+fn get_random_peers(
+    topic_peers: &HashMap<TopicHash, BTreeSet<PeerId>>,
+    connected_peers: &HashMap<PeerId, PeerConnections>,
+    topic_hash: &TopicHash,
+    n: usize,
+    f: impl FnMut(&PeerId) -> bool,
+) -> BTreeSet<PeerId> {
+    get_random_peers_dynamic(topic_peers, connected_peers, topic_hash, |_| n, f)
+}
+
+/// Validates the combination of signing, privacy and message validation to ensure the
+/// configuration will not reject published messages.
+fn validate_config(
+    authenticity: &MessageAuthenticity,
+    validation_mode: &ValidationMode,
+) -> Result<(), &'static str> {
+    match validation_mode {
+        ValidationMode::Anonymous => {
+            if authenticity.is_signing() {
+                return Err("Cannot enable message signing with an Anonymous validation mode. Consider changing either the ValidationMode or MessageAuthenticity");
+            }
+
+            if !authenticity.is_anonymous() {
+                return Err("Published messages contain an author but incoming messages with an author will be rejected. Consider adjusting the validation or privacy settings in the config");
+            }
+        }
+        ValidationMode::Strict => {
+            if !authenticity.is_signing() {
+                return Err(
+                    "Messages will be
+                published unsigned and incoming unsigned messages will be rejected. Consider adjusting
+                the validation or privacy settings in the config"
+                );
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Network behaviour that handles the gossipsub protocol.
@@ -3291,14 +3478,6 @@ where
     }
 }
 
-fn get_ip_addr(addr: &Multiaddr) -> Option<IpAddr> {
-    addr.iter().find_map(|p| match p {
-        Ip4(addr) => Some(IpAddr::V4(addr)),
-        Ip6(addr) => Some(IpAddr::V6(addr)),
-        _ => None,
-    })
-}
-
 impl<C, F> NetworkBehaviour for Behaviour<C, F>
 where
     C: Send + 'static + DataTransform,
@@ -3504,171 +3683,6 @@ where
     }
 }
 
-/// This is called when peers are added to any mesh. It checks if the peer existed
-/// in any other mesh. If this is the first mesh they have joined, it queues a message to notify
-/// the appropriate connection handler to maintain a connection.
-fn peer_added_to_mesh(
-    peer_id: PeerId,
-    new_topics: Vec<&TopicHash>,
-    mesh: &HashMap<TopicHash, BTreeSet<PeerId>>,
-    known_topics: Option<&BTreeSet<TopicHash>>,
-    events: &mut VecDeque<ToSwarm<Event, HandlerIn>>,
-    connections: &HashMap<PeerId, PeerConnections>,
-) {
-    // Ensure there is an active connection
-    let connection_id = {
-        let conn = connections.get(&peer_id).expect("To be connected to peer.");
-        assert!(
-            !conn.connections.is_empty(),
-            "Must have at least one connection"
-        );
-        conn.connections[0]
-    };
-
-    if let Some(topics) = known_topics {
-        for topic in topics {
-            if !new_topics.contains(&topic) {
-                if let Some(mesh_peers) = mesh.get(topic) {
-                    if mesh_peers.contains(&peer_id) {
-                        // the peer is already in a mesh for another topic
-                        return;
-                    }
-                }
-            }
-        }
-    }
-    // This is the first mesh the peer has joined, inform the handler
-    events.push_back(ToSwarm::NotifyHandler {
-        peer_id,
-        event: HandlerIn::JoinedMesh,
-        handler: NotifyHandler::One(connection_id),
-    });
-}
-
-/// This is called when peers are removed from a mesh. It checks if the peer exists
-/// in any other mesh. If this is the last mesh they have joined, we return true, in order to
-/// notify the handler to no longer maintain a connection.
-fn peer_removed_from_mesh(
-    peer_id: PeerId,
-    old_topic: &TopicHash,
-    mesh: &HashMap<TopicHash, BTreeSet<PeerId>>,
-    known_topics: Option<&BTreeSet<TopicHash>>,
-    events: &mut VecDeque<ToSwarm<Event, HandlerIn>>,
-    connections: &HashMap<PeerId, PeerConnections>,
-) {
-    // Ensure there is an active connection
-    let connection_id = connections
-        .get(&peer_id)
-        .expect("To be connected to peer.")
-        .connections
-        .get(0)
-        .expect("There should be at least one connection to a peer.");
-
-    if let Some(topics) = known_topics {
-        for topic in topics {
-            if topic != old_topic {
-                if let Some(mesh_peers) = mesh.get(topic) {
-                    if mesh_peers.contains(&peer_id) {
-                        // the peer exists in another mesh still
-                        return;
-                    }
-                }
-            }
-        }
-    }
-    // The peer is not in any other mesh, inform the handler
-    events.push_back(ToSwarm::NotifyHandler {
-        peer_id,
-        event: HandlerIn::LeftMesh,
-        handler: NotifyHandler::One(*connection_id),
-    });
-}
-
-/// Helper function to get a subset of random gossipsub peers for a `topic_hash`
-/// filtered by the function `f`. The number of peers to get equals the output of `n_map`
-/// that gets as input the number of filtered peers.
-fn get_random_peers_dynamic(
-    topic_peers: &HashMap<TopicHash, BTreeSet<PeerId>>,
-    connected_peers: &HashMap<PeerId, PeerConnections>,
-    topic_hash: &TopicHash,
-    // maps the number of total peers to the number of selected peers
-    n_map: impl Fn(usize) -> usize,
-    mut f: impl FnMut(&PeerId) -> bool,
-) -> BTreeSet<PeerId> {
-    let mut gossip_peers = match topic_peers.get(topic_hash) {
-        // if they exist, filter the peers by `f`
-        Some(peer_list) => peer_list
-            .iter()
-            .cloned()
-            .filter(|p| {
-                f(p) && match connected_peers.get(p) {
-                    Some(connections) if connections.kind == PeerKind::Gossipsub => true,
-                    Some(connections) if connections.kind == PeerKind::Gossipsubv1_1 => true,
-                    _ => false,
-                }
-            })
-            .collect(),
-        None => Vec::new(),
-    };
-
-    // if we have less than needed, return them
-    let n = n_map(gossip_peers.len());
-    if gossip_peers.len() <= n {
-        debug!("RANDOM PEERS: Got {:?} peers", gossip_peers.len());
-        return gossip_peers.into_iter().collect();
-    }
-
-    // we have more peers than needed, shuffle them and return n of them
-    let mut rng = thread_rng();
-    gossip_peers.partial_shuffle(&mut rng, n);
-
-    debug!("RANDOM PEERS: Got {:?} peers", n);
-
-    gossip_peers.into_iter().take(n).collect()
-}
-
-/// Helper function to get a set of `n` random gossipsub peers for a `topic_hash`
-/// filtered by the function `f`.
-fn get_random_peers(
-    topic_peers: &HashMap<TopicHash, BTreeSet<PeerId>>,
-    connected_peers: &HashMap<PeerId, PeerConnections>,
-    topic_hash: &TopicHash,
-    n: usize,
-    f: impl FnMut(&PeerId) -> bool,
-) -> BTreeSet<PeerId> {
-    get_random_peers_dynamic(topic_peers, connected_peers, topic_hash, |_| n, f)
-}
-
-/// Validates the combination of signing, privacy and message validation to ensure the
-/// configuration will not reject published messages.
-fn validate_config(
-    authenticity: &MessageAuthenticity,
-    validation_mode: &ValidationMode,
-) -> Result<(), &'static str> {
-    match validation_mode {
-        ValidationMode::Anonymous => {
-            if authenticity.is_signing() {
-                return Err("Cannot enable message signing with an Anonymous validation mode. Consider changing either the ValidationMode or MessageAuthenticity");
-            }
-
-            if !authenticity.is_anonymous() {
-                return Err("Published messages contain an author but incoming messages with an author will be rejected. Consider adjusting the validation or privacy settings in the config");
-            }
-        }
-        ValidationMode::Strict => {
-            if !authenticity.is_signing() {
-                return Err(
-                    "Messages will be
-                published unsigned and incoming unsigned messages will be rejected. Consider adjusting
-                the validation or privacy settings in the config"
-                );
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
 impl<C: DataTransform, F: TopicSubscriptionFilter> fmt::Debug for Behaviour<C, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Behaviour")
@@ -3684,20 +3698,5 @@ impl<C: DataTransform, F: TopicSubscriptionFilter> fmt::Debug for Behaviour<C, F
             .field("mcache", &self.mcache)
             .field("heartbeat", &self.heartbeat)
             .finish()
-    }
-}
-
-impl Debug for PublishConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PublishConfig::Signing { author, .. } => {
-                f.write_fmt(format_args!("PublishConfig::Signing({author})"))
-            }
-            PublishConfig::Author(author) => {
-                f.write_fmt(format_args!("PublishConfig::Author({author})"))
-            }
-            PublishConfig::RandomAuthor => f.write_fmt(format_args!("PublishConfig::RandomAuthor")),
-            PublishConfig::Anonymous => f.write_fmt(format_args!("PublishConfig::Anonymous")),
-        }
     }
 }

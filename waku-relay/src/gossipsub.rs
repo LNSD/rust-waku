@@ -142,35 +142,37 @@
 
 pub use self::behaviour::{Behaviour, Event, MessageAuthenticity};
 pub use self::config::{Config, ConfigBuilder, ValidationMode, Version};
-pub use self::error_priv::{PublishError, SubscriptionError, ValidationError};
-pub use self::metrics_priv::Config as MetricsConfig;
+pub use self::error::{PublishError, SubscriptionError, ValidationError};
+pub use self::message_id::{FastMessageId, MessageId};
+pub use self::metrics::Config as MetricsConfig;
 pub use self::peer_score::{
     score_parameter_decay, score_parameter_decay_with_base, PeerScoreParams, PeerScoreThresholds,
     TopicScoreParams,
 };
-pub use self::subscription_filter_priv::{
+pub use self::subscription_filter::{
     AllowAllSubscriptionFilter, CallbackSubscriptionFilter, CombinedSubscriptionFilters,
     MaxCountSubscriptionFilter, RegexSubscriptionFilter, TopicSubscriptionFilter,
     WhitelistSubscriptionFilter,
 };
 pub use self::topic::{Hasher, Topic, TopicHash};
 pub use self::transform::{DataTransform, IdentityTransform};
-pub use self::types::{FastMessageId, Message, MessageAcceptance, MessageId, RawMessage, Rpc};
+pub use self::types::{Message, MessageAcceptance, RawMessage, Rpc};
 
 mod backoff;
 mod behaviour;
 mod codec;
 mod config;
-mod error_priv;
+mod error;
 mod gossip_promises;
 mod handler;
 mod mcache;
-mod metrics_priv;
+mod message_id;
+mod metrics;
 mod peer_score;
-mod protocol_priv;
+mod protocol;
 mod rpc;
-mod subscription_filter_priv;
-mod time_cache_priv;
+mod subscription_filter;
+mod time_cache;
 mod topic;
 mod transform;
 mod types;
