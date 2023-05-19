@@ -161,7 +161,6 @@ mod backoff;
 mod behaviour;
 mod codec;
 mod config;
-pub mod error;
 mod error_priv;
 mod gossip_promises;
 mod handler;
