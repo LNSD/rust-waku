@@ -12,7 +12,7 @@ use waku_core::common::protobuf_codec;
 
 use crate::gossipsub::handler::HandlerEvent;
 use crate::gossipsub::rpc::proto::waku::relay::v2::{Message as MessageProto, Rpc as RpcProto};
-use crate::gossipsub::types::{ControlAction, PeerInfo, Subscription, SubscriptionAction};
+use crate::gossipsub::types::{ControlAction, PeerInfo};
 use crate::gossipsub::{RawMessage, Rpc, TopicHash, ValidationError, ValidationMode};
 
 pub struct Codec {
@@ -354,18 +354,7 @@ impl Decoder for Codec {
         Ok(Some(HandlerEvent::Message {
             rpc: Rpc {
                 messages,
-                subscriptions: rpc
-                    .subscriptions
-                    .into_iter()
-                    .map(|sub| Subscription {
-                        action: if Some(true) == sub.subscribe {
-                            SubscriptionAction::Subscribe
-                        } else {
-                            SubscriptionAction::Unsubscribe
-                        },
-                        topic_hash: TopicHash::from_raw(sub.topic_id.unwrap_or_default()),
-                    })
-                    .collect(),
+                subscriptions: rpc.subscriptions.into_iter().map(Into::into).collect(),
                 control_msgs,
             },
             invalid_messages,

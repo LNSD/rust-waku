@@ -4,44 +4,36 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-either = "1.5"
-libp2p = { version = "0.51.3", features = ["macros"] }
-bytes = "1.4.0"
+anyhow.workspace = true
+asynchronous-codec = "0.6"
+base64 = "0.21.0"
 byteorder = "1.3.4"
+bytes = "1.4.0"
+either = "1.5"
 fnv = "1.0.7"
 futures = "0.3.28"
-rand = "0.8"
-asynchronous-codec = "0.6"
-unsigned-varint = { version = "0.7.0", features = ["asynchronous_codec"] }
-log = "0.4.11"
-sha2 = "0.10.6"
-base64 = "0.21.0"
-smallvec = "1.6.1"
-strum_macros = "0.24.3"
-prost = "0.11.9"
-quick-protobuf = "0.8"
-#quick-protobuf-codec = { version = "0.1", path = "../../misc/quick-protobuf-codec" }
 hex_fmt = "0.3.0"
+instant = "0.1.11"
+libp2p = { version = "0.51.3", features = ["macros"] }
+log = "0.4.11"
+prometheus-client = "0.19.0"
+prost = "0.11.9"
+rand = "0.8"
 regex = "1.8.1"
 serde = { version = "1", optional = true, features = ["derive"] }
-thiserror = { workspace = true }
-wasm-timer = "0.2.5"
-instant = "0.1.11"
+sha2 = "0.10.6"
+smallvec = "1.6.1"
+strum_macros = "0.24.3"
+thiserror.workspace = true
+unsigned-varint = { version = "0.7.0", features = ["asynchronous_codec"] }
 void = "1.0.2"
-# Metrics dependencies
-prometheus-client = "0.19.0"
 waku-core = { version = "0.1.0", path = "../waku-core" }
+wasm-timer = "0.2.5"
 
 [dev-dependencies]
-async-std = { version = "1.6.3", features = ["unstable"] }
 env_logger = "0.10.0"
 hex = "0.4.2"
 hex-literal = "0.4.1"
-#libp2p-core = { path = "../../core"}
-#libp2p-mplex = { path = "../../muxers/mplex"}
-#libp2p-noise = { path = "../../transports/noise"}
-#libp2p-swarm-test = { path = "../../swarm-test"}
-#quickcheck-ext = { path = "../../misc/quickcheck-ext" }
 
 # Passing arguments to the docsrs builder in order to properly document cfg's.
 # More information: https://docs.rs/about/builds#cross-compiling
