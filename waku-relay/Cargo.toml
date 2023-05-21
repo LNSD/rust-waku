@@ -31,6 +31,7 @@ waku-core = { version = "0.1.0", path = "../waku-core" }
 wasm-timer = "0.2.5"
 
 [dev-dependencies]
+assert_matches = "1.5.0"
 env_logger = "0.10.0"
 hex = "0.4.2"
 hex-literal = "0.4.1"

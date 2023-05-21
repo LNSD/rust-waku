@@ -142,7 +142,7 @@
 
 pub use self::behaviour::{Behaviour, Event, MessageAuthenticity};
 pub use self::config::{Config, ConfigBuilder, ValidationMode, Version};
-pub use self::error::{PublishError, SubscriptionError, ValidationError};
+pub use self::error::{PublishError, SubscriptionError};
 pub use self::message_id::{FastMessageId, MessageId};
 pub use self::metrics::Config as MetricsConfig;
 pub use self::peer_score::{
@@ -157,6 +157,7 @@ pub use self::subscription_filter::{
 pub use self::topic::{Hasher, Topic, TopicHash};
 pub use self::transform::{DataTransform, IdentityTransform};
 pub use self::types::{Message, MessageAcceptance, RawMessage, Rpc};
+pub use validation::ValidationError;
 
 mod backoff;
 mod behaviour;
@@ -176,6 +177,7 @@ mod time_cache;
 mod topic;
 mod transform;
 mod types;
+mod validation;
 
 pub type IdentTopic = Topic<topic::IdentityHash>;
 pub type Sha256Topic = Topic<topic::Sha256Hash>;

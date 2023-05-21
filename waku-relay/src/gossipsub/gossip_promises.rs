@@ -24,9 +24,9 @@ use libp2p::PeerId;
 use log::debug;
 use wasm_timer::Instant;
 
-use crate::gossipsub::MessageId;
 use crate::gossipsub::peer_score::RejectReason;
-use crate::gossipsub::ValidationError;
+use crate::gossipsub::validation::ValidationError;
+use crate::gossipsub::MessageId;
 
 /// Tracks recently sent `IWANT` messages and checks if peers respond to them.
 #[derive(Default)]

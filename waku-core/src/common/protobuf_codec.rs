@@ -1,5 +1,4 @@
 use std::io;
-use std::io::Cursor;
 use std::marker::PhantomData;
 
 use asynchronous_codec::{Decoder, Encoder};
@@ -37,7 +36,7 @@ impl<In: Message, Out> Encoder for Codec<In, Out> {
     type Error = io::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let mut encoded_msg = BytesMut::new();
+        let mut encoded_msg = BytesMut::with_capacity(item.encoded_len());
         item.encode(&mut encoded_msg)
             .expect("BytesMut to have sufficient capacity.");
         self.uvi.encode(encoded_msg.freeze(), dst)
@@ -52,7 +51,7 @@ impl<In, Out: Message + Default> Decoder for Codec<In, Out> {
         Ok(self
             .uvi
             .decode(src)?
-            .map(|msg| Message::decode(Cursor::new(msg)))
+            .map(|msg| Message::decode(msg))
             .transpose()?)
     }
 }
