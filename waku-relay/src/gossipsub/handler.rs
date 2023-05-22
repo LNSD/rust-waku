@@ -24,7 +24,6 @@ use std::{
     time::Duration,
 };
 
-use crate::gossipsub::codec::Codec;
 use asynchronous_codec::Framed;
 use futures::future::Either;
 use futures::prelude::*;
@@ -40,8 +39,9 @@ use libp2p::swarm::NegotiatedSubstream;
 use smallvec::SmallVec;
 use void::Void;
 
+use crate::gossipsub::codec::Codec;
 use crate::gossipsub::protocol::ProtocolConfig;
-use crate::gossipsub::rpc::proto::waku::relay::v2::Rpc as RpcProto;
+use crate::gossipsub::rpc::RpcProto;
 use crate::gossipsub::types::{PeerKind, RawMessage, Rpc};
 use crate::gossipsub::validation::ValidationError;
 

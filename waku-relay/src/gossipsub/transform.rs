@@ -25,6 +25,8 @@
 //! algorithms that can be topic-specific. Once the raw data is transformed the message-id is then
 //! calculated, allowing for applications to employ message-id functions post compression.
 
+use std::io;
+
 use crate::gossipsub::{Message, RawMessage, TopicHash};
 
 /// A general trait of transforming a [`RawMessage`] into a [`Message`]. The
@@ -37,15 +39,11 @@ use crate::gossipsub::{Message, RawMessage, TopicHash};
 /// By default, this is the identity transform for all fields in [`Message`].
 pub trait DataTransform {
     /// Takes a [`RawMessage`] received and converts it to a [`Message`].
-    fn inbound_transform(&self, raw_message: RawMessage) -> Result<Message, std::io::Error>;
+    fn inbound_transform(&self, raw_message: RawMessage) -> Result<Message, io::Error>;
 
     /// Takes the data to be published (a topic and associated data) transforms the data. The
     /// transformed data will then be used to create a [`crate::RawMessage`] to be sent to peers.
-    fn outbound_transform(
-        &self,
-        topic: &TopicHash,
-        data: Vec<u8>,
-    ) -> Result<Vec<u8>, std::io::Error>;
+    fn outbound_transform(&self, topic: &TopicHash, data: Vec<u8>) -> Result<Vec<u8>, io::Error>;
 }
 
 /// The default transform, the raw data is propagated as is to the application layer gossipsub.
@@ -53,7 +51,7 @@ pub trait DataTransform {
 pub struct IdentityTransform;
 
 impl DataTransform for IdentityTransform {
-    fn inbound_transform(&self, raw_message: RawMessage) -> Result<Message, std::io::Error> {
+    fn inbound_transform(&self, raw_message: RawMessage) -> Result<Message, io::Error> {
         Ok(Message {
             source: raw_message.source,
             data: raw_message.data,
@@ -62,11 +60,7 @@ impl DataTransform for IdentityTransform {
         })
     }
 
-    fn outbound_transform(
-        &self,
-        _topic: &TopicHash,
-        data: Vec<u8>,
-    ) -> Result<Vec<u8>, std::io::Error> {
+    fn outbound_transform(&self, _: &TopicHash, data: Vec<u8>) -> Result<Vec<u8>, io::Error> {
         Ok(data)
     }
 }

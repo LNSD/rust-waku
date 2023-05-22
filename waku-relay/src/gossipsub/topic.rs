@@ -25,7 +25,7 @@ use prometheus_client::encoding::EncodeLabelSet;
 use prost::Message;
 use sha2::{Digest, Sha256};
 
-use crate::gossipsub::rpc::proto::waku::relay::v2::TopicDescriptor as TopicDescriptorProto;
+use crate::gossipsub::rpc::TopicDescriptorProto;
 
 /// A generic trait that can be extended for various hashing types for a topic.
 pub trait Hasher {

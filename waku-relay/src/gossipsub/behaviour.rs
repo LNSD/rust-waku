@@ -18,17 +18,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::cmp::Ordering::Equal;
+use std::cmp::max;
+use std::cmp::Ordering;
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt;
-use std::{
-    cmp::{max, Ordering},
-    collections::HashSet,
-    collections::VecDeque,
-    collections::{BTreeSet, HashMap},
-    net::IpAddr,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::net::IpAddr;
+use std::task::{Context, Poll};
+use std::time::Duration;
 
 use bytes::Bytes;
 use futures::StreamExt;
@@ -44,10 +40,9 @@ use libp2p::swarm::{
 };
 use log::{debug, error, trace, warn};
 use prometheus_client::registry::Registry;
-use prost::Message as ProstMessage;
+use prost::Message as _;
 use rand::{seq::SliceRandom, thread_rng};
-use wasm_timer::Instant;
-use wasm_timer::Interval;
+use wasm_timer::{Instant, Interval};
 
 use crate::gossipsub::backoff::BackoffStorage;
 use crate::gossipsub::codec::SIGNING_PREFIX;
@@ -59,9 +54,7 @@ use crate::gossipsub::message_id::MessageId;
 use crate::gossipsub::metrics::{Churn, Config as MetricsConfig, Inclusion, Metrics, Penalty};
 use crate::gossipsub::peer_score::{PeerScore, PeerScoreParams, PeerScoreThresholds, RejectReason};
 use crate::gossipsub::protocol::ProtocolConfig;
-use crate::gossipsub::rpc::proto::waku::relay::v2::{
-    ControlMessage as ControlMessageProto, Message as MessageProto, Rpc as RpcProto,
-};
+use crate::gossipsub::rpc::{ControlMessageProto, MessageProto, RpcProto};
 use crate::gossipsub::subscription_filter::{AllowAllSubscriptionFilter, TopicSubscriptionFilter};
 use crate::gossipsub::time_cache::{DuplicateCache, TimeCache};
 use crate::gossipsub::topic::{Hasher, Topic, TopicHash};
@@ -75,7 +68,7 @@ use crate::gossipsub::validation::ValidationError;
 use crate::gossipsub::{FastMessageId, TopicScoreParams};
 use crate::gossipsub::{PublishError, SubscriptionError};
 
-/// A data structure for storing configuration for publishing messages. See [`MessageAuthenticity`]
+// A data structure for storing configuration for publishing messages. See [`MessageAuthenticity`]
 /// for further details.
 #[allow(clippy::large_enum_variant)]
 enum PublishConfig {
@@ -2529,7 +2522,7 @@ where
                     peers_by_score.sort_by(|p1, p2| {
                         let p1_score = *scores.get(p1).unwrap_or(&0.0);
                         let p2_score = *scores.get(p2).unwrap_or(&0.0);
-                        p1_score.partial_cmp(&p2_score).unwrap_or(Equal)
+                        p1_score.partial_cmp(&p2_score).unwrap_or(Ordering::Equal)
                     });
 
                     let middle = peers_by_score.len() / 2;
@@ -3481,8 +3474,8 @@ where
 
 impl<C, F> NetworkBehaviour for Behaviour<C, F>
 where
-    C: Send + 'static + DataTransform,
-    F: Send + 'static + TopicSubscriptionFilter,
+    C: DataTransform + Send + 'static,
+    F: TopicSubscriptionFilter + Send + 'static,
 {
     type ConnectionHandler = Handler;
     type OutEvent = Event;
@@ -3582,11 +3575,11 @@ where
                     self.handle_received_subscriptions(&rpc.subscriptions, &propagation_source);
                 }
 
-                // Check if peer is graylisted in which case we ignore the event
+                // Check if peer is gray-listed in which case we ignore the event
                 if let (true, _) =
                     self.score_below_threshold(&propagation_source, |pst| pst.graylist_threshold)
                 {
-                    debug!("RPC Dropped from greylisted peer {}", propagation_source);
+                    debug!("RPC Dropped from gray-listed peer {}", propagation_source);
                     return;
                 }
 

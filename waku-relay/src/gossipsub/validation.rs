@@ -3,9 +3,8 @@ use libp2p::identity::{Keypair, PublicKey};
 use libp2p::PeerId;
 use log::{debug, warn};
 use prost::Message as _;
-use void::unreachable;
 
-use crate::gossipsub::rpc::proto::waku::relay::v2::Message as MessageProto;
+use crate::gossipsub::rpc::MessageProto;
 
 pub(crate) const SIGNING_PREFIX: &[u8] = b"libp2p-pubsub:";
 
@@ -97,6 +96,7 @@ fn verify_signature(message: &MessageProto) -> bool {
 /// Generate the signature for a message.
 ///
 /// The signature is calculated over the bytes "libp2p-pubsub:<protobuf-message>".
+#[cfg(test)]
 pub fn generate_message_signature(
     message: &MessageProto,
     keypair: &Keypair,

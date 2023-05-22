@@ -400,7 +400,7 @@ impl Default for Config {
 }
 
 impl fmt::Debug for Config {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut builder = f.debug_struct("GossipsubConfig");
         let _ = builder.field("protocol_id", &self.protocol_id);
         let _ = builder.field("custom_id_version", &self.custom_id_version);
