@@ -21,16 +21,13 @@
 //! A collection of types using the Gossipsub system.
 use std::fmt;
 
-use bytes::Bytes;
 use libp2p::swarm::ConnectionId;
 use libp2p::PeerId;
 use prometheus_client::encoding::EncodeLabelValue;
-use prost::Message as ProstMessage;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+use prost::Message as _;
 
 use crate::gossipsub::message_id::MessageId;
-use crate::gossipsub::rpc::proto::waku::relay::v2::Message as MessageProto;
+use crate::gossipsub::rpc::MessageProto;
 use crate::gossipsub::topic::TopicHash;
 
 /// Validation kinds from the application for received messages.
@@ -106,16 +103,7 @@ pub struct RawMessage {
 impl RawMessage {
     /// Calculates the encoded length of this message (used for calculating metrics).
     pub fn raw_protobuf_len(&self) -> usize {
-        let message = MessageProto {
-            from: self.source.map(|m| Bytes::from(m.to_bytes())),
-            data: Some(Bytes::from(self.data.clone())),
-            seqno: self
-                .sequence_number
-                .map(|s| Bytes::from(s.to_be_bytes().to_vec())),
-            topic: TopicHash::into_string(self.topic.clone()),
-            signature: self.signature.clone().map(Bytes::from),
-            key: self.key.clone().map(Bytes::from),
-        };
+        let message: MessageProto = self.clone().into();
         message.encoded_len()
     }
 }

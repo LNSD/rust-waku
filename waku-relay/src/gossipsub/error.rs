@@ -39,7 +39,7 @@ pub enum PublishError {
     /// message size.
     MessageTooLarge,
     /// The compression algorithm failed.
-    TransformFailed(std::io::Error),
+    TransformFailed(io::Error),
 }
 
 impl std::fmt::Display for PublishError {
@@ -105,8 +105,8 @@ pub enum HandlerError {
     Codec(#[from] io::Error),
 }
 
-impl From<std::io::Error> for PublishError {
-    fn from(error: std::io::Error) -> PublishError {
+impl From<io::Error> for PublishError {
+    fn from(error: io::Error) -> PublishError {
         PublishError::TransformFailed(error)
     }
 }

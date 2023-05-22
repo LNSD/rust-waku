@@ -6,7 +6,7 @@ use bytes::BytesMut;
 use waku_core::common::protobuf_codec;
 
 use crate::gossipsub::handler::HandlerEvent;
-use crate::gossipsub::rpc::proto::waku::relay::v2::Rpc as RpcProto;
+use crate::gossipsub::rpc::RpcProto;
 use crate::gossipsub::types::ControlAction;
 use crate::gossipsub::validation::{
     AnonymousMessageValidator, MessageValidator, NoopMessageValidator, PermissiveMessageValidator,
