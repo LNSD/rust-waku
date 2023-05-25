@@ -40,7 +40,7 @@ use smallvec::SmallVec;
 use void::Void;
 
 use crate::gossipsub::codec::Codec;
-use crate::gossipsub::protocol::ProtocolConfig;
+use crate::gossipsub::protocol::ProtocolUpgrade;
 use crate::gossipsub::rpc::RpcProto;
 use crate::gossipsub::types::{PeerKind, RawMessage, Rpc};
 use crate::gossipsub::validation::ValidationError;
@@ -82,15 +82,10 @@ pub enum HandlerIn {
 /// creation loops.
 const MAX_SUBSTREAM_ATTEMPTS: usize = 5;
 
-pub enum Handler {
-    Enabled(EnabledHandler),
-    Disabled(DisabledHandler),
-}
-
 /// Protocol Handler that manages a single long-lived substream with a peer.
 pub struct EnabledHandler {
     /// Upgrade configuration for the gossipsub protocol.
-    listen_protocol: ProtocolConfig,
+    listen_protocol: ProtocolUpgrade,
 
     /// The single long-lived outbound substream.
     outbound_substream: Option<OutboundSubstreamState>,
@@ -127,61 +122,6 @@ pub struct EnabledHandler {
     /// Keeps track of whether this connection is for a peer in the mesh. This is used to make
     /// decisions about the keep alive state for this connection.
     in_mesh: bool,
-}
-
-pub enum DisabledHandler {
-    /// If the peer doesn't support the gossipsub protocol we do not immediately disconnect.
-    /// Rather, we disable the handler and prevent any incoming or outgoing substreams from being
-    /// established.
-    ProtocolUnsupported {
-        /// Keeps track on whether we have sent the peer kind to the behaviour.
-        peer_kind_sent: bool,
-    },
-    /// The maximum number of inbound or outbound substream attempts have happened and thereby the
-    /// handler has been disabled.
-    MaxSubstreamAttempts,
-}
-
-/// State of the inbound substream, opened either by us or by the remote.
-enum InboundSubstreamState {
-    /// Waiting for a message from the remote. The idle state for an inbound substream.
-    WaitingInput(Framed<NegotiatedSubstream, Codec>),
-    /// The substream is being closed.
-    Closing(Framed<NegotiatedSubstream, Codec>),
-    /// An error occurred during processing.
-    Poisoned,
-}
-
-/// State of the outbound substream, opened either by us or by the remote.
-enum OutboundSubstreamState {
-    /// Waiting for the user to send a message. The idle state for an outbound substream.
-    WaitingOutput(Framed<NegotiatedSubstream, Codec>),
-    /// Waiting to send a message to the remote.
-    PendingSend(Framed<NegotiatedSubstream, Codec>, RpcProto),
-    /// Waiting to flush the substream so that the data arrives to the remote.
-    PendingFlush(Framed<NegotiatedSubstream, Codec>),
-    /// An error occurred during processing.
-    Poisoned,
-}
-
-impl Handler {
-    /// Builds a new [`Handler`].
-    pub fn new(protocol_config: ProtocolConfig, idle_timeout: Duration) -> Self {
-        Handler::Enabled(EnabledHandler {
-            listen_protocol: protocol_config,
-            inbound_substream: None,
-            outbound_substream: None,
-            outbound_substream_establishing: false,
-            outbound_substream_attempts: 0,
-            inbound_substream_attempts: 0,
-            send_queue: SmallVec::new(),
-            peer_kind: None,
-            peer_kind_sent: false,
-            last_io_activity: Instant::now(),
-            idle_timeout,
-            in_mesh: false,
-        })
-    }
 }
 
 impl EnabledHandler {
@@ -394,14 +334,74 @@ impl EnabledHandler {
     }
 }
 
+pub enum DisabledHandler {
+    /// If the peer doesn't support the gossipsub protocol we do not immediately disconnect.
+    /// Rather, we disable the handler and prevent any incoming or outgoing substreams from being
+    /// established.
+    ProtocolUnsupported {
+        /// Keeps track on whether we have sent the peer kind to the behaviour.
+        peer_kind_sent: bool,
+    },
+    /// The maximum number of inbound or outbound substream attempts have happened and thereby the
+    /// handler has been disabled.
+    MaxSubstreamAttempts,
+}
+
+/// State of the inbound substream, opened either by us or by the remote.
+enum InboundSubstreamState {
+    /// Waiting for a message from the remote. The idle state for an inbound substream.
+    WaitingInput(Framed<NegotiatedSubstream, Codec>),
+    /// The substream is being closed.
+    Closing(Framed<NegotiatedSubstream, Codec>),
+    /// An error occurred during processing.
+    Poisoned,
+}
+
+/// State of the outbound substream, opened either by us or by the remote.
+enum OutboundSubstreamState {
+    /// Waiting for the user to send a message. The idle state for an outbound substream.
+    WaitingOutput(Framed<NegotiatedSubstream, Codec>),
+    /// Waiting to send a message to the remote.
+    PendingSend(Framed<NegotiatedSubstream, Codec>, RpcProto),
+    /// Waiting to flush the substream so that the data arrives to the remote.
+    PendingFlush(Framed<NegotiatedSubstream, Codec>),
+    /// An error occurred during processing.
+    Poisoned,
+}
+
+pub enum Handler {
+    Enabled(EnabledHandler),
+    Disabled(DisabledHandler),
+}
+
+impl Handler {
+    /// Builds a new [`Handler`].
+    pub fn new(protocol_config: ProtocolUpgrade, idle_timeout: Duration) -> Self {
+        Handler::Enabled(EnabledHandler {
+            listen_protocol: protocol_config,
+            inbound_substream: None,
+            outbound_substream: None,
+            outbound_substream_establishing: false,
+            outbound_substream_attempts: 0,
+            inbound_substream_attempts: 0,
+            send_queue: SmallVec::new(),
+            peer_kind: None,
+            peer_kind_sent: false,
+            last_io_activity: Instant::now(),
+            idle_timeout,
+            in_mesh: false,
+        })
+    }
+}
+
 impl ConnectionHandler for Handler {
     type InEvent = HandlerIn;
     type OutEvent = HandlerEvent;
     type Error = Void;
+    type InboundProtocol = either::Either<ProtocolUpgrade, DeniedUpgrade>;
+    type OutboundProtocol = ProtocolUpgrade;
     type InboundOpenInfo = ();
-    type InboundProtocol = either::Either<ProtocolConfig, DeniedUpgrade>;
     type OutboundOpenInfo = ();
-    type OutboundProtocol = ProtocolConfig;
 
     fn listen_protocol(&self) -> SubstreamProtocol<Self::InboundProtocol, Self::InboundOpenInfo> {
         match self {
@@ -410,23 +410,6 @@ impl ConnectionHandler for Handler {
             }
             Handler::Disabled(_) => {
                 SubstreamProtocol::new(either::Either::Right(DeniedUpgrade), ())
-            }
-        }
-    }
-
-    fn on_behaviour_event(&mut self, message: HandlerIn) {
-        match self {
-            Handler::Enabled(handler) => match message {
-                HandlerIn::Message(m) => handler.send_queue.push(m),
-                HandlerIn::JoinedMesh => {
-                    handler.in_mesh = true;
-                }
-                HandlerIn::LeftMesh => {
-                    handler.in_mesh = false;
-                }
-            },
-            Handler::Disabled(_) => {
-                log::debug!("Handler is disabled. Dropping message {:?}", message);
             }
         }
     }
@@ -476,6 +459,23 @@ impl ConnectionHandler for Handler {
                 Poll::Pending
             }
             Handler::Disabled(DisabledHandler::MaxSubstreamAttempts) => Poll::Pending,
+        }
+    }
+
+    fn on_behaviour_event(&mut self, message: HandlerIn) {
+        match self {
+            Handler::Enabled(handler) => match message {
+                HandlerIn::Message(m) => handler.send_queue.push(m),
+                HandlerIn::JoinedMesh => {
+                    handler.in_mesh = true;
+                }
+                HandlerIn::LeftMesh => {
+                    handler.in_mesh = false;
+                }
+            },
+            Handler::Disabled(_) => {
+                log::debug!("Handler is disabled. Dropping message {:?}", message);
+            }
         }
     }
 

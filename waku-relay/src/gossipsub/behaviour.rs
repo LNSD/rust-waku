@@ -49,11 +49,11 @@ use crate::gossipsub::codec::SIGNING_PREFIX;
 use crate::gossipsub::config::{Config, ValidationMode};
 use crate::gossipsub::gossip_promises::GossipPromises;
 use crate::gossipsub::handler::{Handler, HandlerEvent, HandlerIn};
-use crate::gossipsub::mcache::MessageCache;
+use crate::gossipsub::mcache::{CachedMessage, MessageCache};
 use crate::gossipsub::message_id::MessageId;
 use crate::gossipsub::metrics::{Churn, Config as MetricsConfig, Inclusion, Metrics, Penalty};
 use crate::gossipsub::peer_score::{PeerScore, PeerScoreParams, PeerScoreThresholds, RejectReason};
-use crate::gossipsub::protocol::ProtocolConfig;
+use crate::gossipsub::protocol::ProtocolUpgrade;
 use crate::gossipsub::rpc::{ControlMessageProto, MessageProto, RpcProto};
 use crate::gossipsub::subscription_filter::{AllowAllSubscriptionFilter, TopicSubscriptionFilter};
 use crate::gossipsub::time_cache::{DuplicateCache, TimeCache};
@@ -921,7 +921,17 @@ where
         // If the message isn't a duplicate and we have sent it to some peers add it to the
         // duplicate cache and memcache.
         self.duplicate_cache.insert(msg_id.clone());
-        self.mcache.put(&msg_id, raw_message);
+
+        let cached_message = CachedMessage {
+            source: raw_message.source,
+            data: raw_message.data,
+            sequence_number: raw_message.sequence_number,
+            topic: raw_message.topic,
+            signature: raw_message.signature,
+            key: raw_message.key,
+            validated: true, // all published messages are valid
+        };
+        self.mcache.put(&msg_id, cached_message);
 
         // If the message is anonymous or has a random author add it to the published message ids
         // cache.
@@ -1000,7 +1010,7 @@ where
 
                 self.forward_msg(
                     msg_id,
-                    raw_message,
+                    raw_message.into(),
                     Some(propagation_source),
                     originating_peers,
                 )?;
@@ -1535,7 +1545,10 @@ where
         if !cached_messages.is_empty() {
             debug!("IWANT: Sending cached messages to peer: {:?}", peer_id);
             // Send the messages to the peer
-            let message_list: Vec<_> = cached_messages.into_iter().map(|entry| entry.1).collect();
+            let message_list: Vec<RawMessage> = cached_messages
+                .into_iter()
+                .map(|entry| entry.1.into())
+                .collect();
 
             let topics = message_list
                 .iter()
@@ -1896,13 +1909,6 @@ where
             }
         }
 
-        // If we are not validating messages, assume this message is validated
-        // This will allow the message to be gossiped without explicitly calling
-        // `validate_message`.
-        if !self.config.validate_messages() {
-            raw_message.validated = true;
-        }
-
         // reject messages claiming to be from ourselves but not locally published
         let self_published = !self.config.allow_self_origin()
             && if let Some(own_id) = self.publish_config.get_own_id() {
@@ -2021,7 +2027,22 @@ where
         }
 
         // Add the message to our memcache
-        self.mcache.put(&msg_id, raw_message.clone());
+        let cached_message = {
+            let message = raw_message.clone();
+            CachedMessage {
+                source: message.source,
+                data: message.data,
+                sequence_number: message.sequence_number,
+                topic: message.topic,
+                signature: message.signature,
+                key: message.key,
+                // If we are not validating messages, assume this message is validated
+                // This will allow the message to be gossiped without explicitly calling
+                // `validate_message`.
+                validated: !self.config.validate_messages(),
+            }
+        };
+        self.mcache.put(&msg_id, cached_message);
 
         // Dispatch the message to the user if we are subscribed to any of the topics
         if self.mesh.contains_key(&message.topic) {
@@ -2997,7 +3018,6 @@ where
                     topic,
                     signature,
                     key: inline_key.clone(),
-                    validated: true, // all published messages are valid
                 })
             }
             PublishConfig::Author(peer_id) => {
@@ -3010,7 +3030,6 @@ where
                     topic,
                     signature: None,
                     key: None,
-                    validated: true, // all published messages are valid
                 })
             }
             PublishConfig::RandomAuthor => {
@@ -3023,7 +3042,6 @@ where
                     topic,
                     signature: None,
                     key: None,
-                    validated: true, // all published messages are valid
                 })
             }
             PublishConfig::Anonymous => {
@@ -3036,7 +3054,6 @@ where
                     topic,
                     signature: None,
                     key: None,
-                    validated: true, // all published messages are valid
                 })
             }
         }
@@ -3488,7 +3505,7 @@ where
         _: &Multiaddr,
     ) -> Result<THandler<Self>, ConnectionDenied> {
         Ok(Handler::new(
-            ProtocolConfig::new(&self.config),
+            ProtocolUpgrade::new(&self.config),
             self.config.idle_timeout(),
         ))
     }
@@ -3501,7 +3518,7 @@ where
         _: Endpoint,
     ) -> Result<THandler<Self>, ConnectionDenied> {
         Ok(Handler::new(
-            ProtocolConfig::new(&self.config),
+            ProtocolUpgrade::new(&self.config),
             self.config.idle_timeout(),
         ))
     }

@@ -26,6 +26,7 @@ use libp2p::PeerId;
 use prometheus_client::encoding::EncodeLabelValue;
 use prost::Message as _;
 
+use crate::gossipsub::mcache::CachedMessage;
 use crate::gossipsub::message_id::MessageId;
 use crate::gossipsub::rpc::MessageProto;
 use crate::gossipsub::topic::TopicHash;
@@ -80,24 +81,16 @@ impl fmt::Display for PeerKind {
 pub struct RawMessage {
     /// Id of the peer that published this message.
     pub source: Option<PeerId>,
-
     /// Content of the message. Its meaning is out of scope of this library.
     pub data: Vec<u8>,
-
     /// A random sequence number.
     pub sequence_number: Option<u64>,
-
     /// The topic this message belongs to
     pub topic: TopicHash,
-
     /// The signature of the message if it's signed.
     pub signature: Option<Vec<u8>>,
-
     /// The public key of the message if it is signed and the source [`PeerId`] cannot be inlined.
     pub key: Option<Vec<u8>>,
-
-    /// Flag indicating if this message has been validated by the application or not.
-    pub validated: bool,
 }
 
 impl RawMessage {
@@ -105,6 +98,19 @@ impl RawMessage {
     pub fn raw_protobuf_len(&self) -> usize {
         let message: MessageProto = self.clone().into();
         message.encoded_len()
+    }
+}
+
+impl From<CachedMessage> for RawMessage {
+    fn from(message: CachedMessage) -> Self {
+        Self {
+            source: message.source,
+            data: message.data,
+            sequence_number: message.sequence_number,
+            topic: message.topic,
+            signature: message.signature,
+            key: message.key,
+        }
     }
 }
 
