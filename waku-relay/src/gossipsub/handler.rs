@@ -42,22 +42,14 @@ use void::Void;
 use crate::gossipsub::codec::Codec;
 use crate::gossipsub::protocol::ProtocolUpgrade;
 use crate::gossipsub::rpc::RpcProto;
-use crate::gossipsub::types::{PeerKind, RawMessage, Rpc};
-use crate::gossipsub::validation::ValidationError;
+use crate::gossipsub::types::PeerKind;
 
 /// The event emitted by the Handler. This informs the behaviour of various events created
 /// by the handler.
 #[derive(Debug)]
 pub enum HandlerEvent {
-    /// A GossipsubRPC message has been received. This also contains a list of invalid messages (if
-    /// any) that were received.
-    Message {
-        /// The GossipsubRPC message excluding any invalid messages.
-        rpc: Rpc,
-        /// Any invalid messages that were received in the RPC, along with the associated
-        /// validation error.
-        invalid_messages: Vec<(RawMessage, ValidationError)>,
-    },
+    /// A Gossipsub RPC message has been received.
+    Rpc(RpcProto),
     /// An inbound or outbound substream has been established with the peer and this informs over
     /// which protocol. This message only occurs once per connection.
     PeerKind(PeerKind),

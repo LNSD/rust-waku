@@ -28,7 +28,7 @@ use libp2p::core::{ProtocolName, UpgradeInfo};
 use libp2p::{InboundUpgrade, OutboundUpgrade};
 
 use crate::gossipsub::codec::Codec;
-use crate::gossipsub::config::{ValidationMode, Version};
+use crate::gossipsub::config::Version;
 use crate::gossipsub::types::PeerKind;
 use crate::gossipsub::Config;
 
@@ -76,8 +76,6 @@ pub struct ProtocolUpgrade {
     protocol_ids: Vec<ProtocolId>,
     /// The maximum transmit size for a packet.
     max_transmit_size: usize,
-    /// Determines the level of validation to be done on incoming messages.
-    validation_mode: ValidationMode,
 }
 
 impl ProtocolUpgrade {
@@ -118,7 +116,6 @@ impl ProtocolUpgrade {
         ProtocolUpgrade {
             protocol_ids,
             max_transmit_size: gossipsub_config.max_transmit_size(),
-            validation_mode: gossipsub_config.validation_mode().clone(),
         }
     }
 }
@@ -142,10 +139,7 @@ where
 
     fn upgrade_inbound(self, socket: TSocket, protocol_id: Self::Info) -> Self::Future {
         Box::pin(future::ok((
-            Framed::new(
-                socket,
-                Codec::new(self.max_transmit_size, self.validation_mode),
-            ),
+            Framed::new(socket, Codec::new(self.max_transmit_size)),
             protocol_id.kind,
         )))
     }
@@ -161,10 +155,7 @@ where
 
     fn upgrade_outbound(self, socket: TSocket, protocol_id: Self::Info) -> Self::Future {
         Box::pin(future::ok((
-            Framed::new(
-                socket,
-                Codec::new(self.max_transmit_size, self.validation_mode),
-            ),
+            Framed::new(socket, Codec::new(self.max_transmit_size)),
             protocol_id.kind,
         )))
     }
