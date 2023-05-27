@@ -64,7 +64,10 @@ use crate::gossipsub::types::{
     SubscriptionAction,
 };
 use crate::gossipsub::types::{PeerConnections, PeerKind, Rpc};
-use crate::gossipsub::validation::ValidationError;
+use crate::gossipsub::validation::{
+    AnonymousMessageValidator, MessageValidator, NoopMessageValidator, PermissiveMessageValidator,
+    StrictMessageValidator, ValidationError,
+};
 use crate::gossipsub::{FastMessageId, TopicScoreParams};
 use crate::gossipsub::{PublishError, SubscriptionError};
 
@@ -520,6 +523,9 @@ pub struct Behaviour<D = IdentityTransform, F = AllowAllSubscriptionFilter> {
 
     /// Keep track of a set of internal metrics relating to gossipsub.
     metrics: Option<Metrics>,
+
+    /// A validator for incoming messages.
+    message_validator: Box<dyn MessageValidator>,
 }
 
 impl<D, F> Behaviour<D, F>
@@ -624,6 +630,13 @@ where
         // were received locally.
         validate_config(&privacy, config.validation_mode())?;
 
+        let message_validator: Box<dyn MessageValidator> = match &config.validation_mode() {
+            ValidationMode::Strict => Box::new(StrictMessageValidator::new()),
+            ValidationMode::Permissive => Box::new(PermissiveMessageValidator::new()),
+            ValidationMode::Anonymous => Box::new(AnonymousMessageValidator::new()),
+            ValidationMode::None => Box::new(NoopMessageValidator::new()),
+        };
+
         Ok(Behaviour {
             metrics: metrics.map(|(registry, cfg)| Metrics::new(registry, cfg)),
             events: VecDeque::new(),
@@ -660,6 +673,7 @@ where
             config,
             subscription_filter,
             data_transform,
+            message_validator,
         })
     }
 }
@@ -1384,6 +1398,134 @@ where
         }
     }
 
+    fn handle_received_rpc(&mut self, propagation_source: &PeerId, rpc: RpcProto) {
+        // Handle subscriptions
+        let subscriptions: Vec<Subscription> =
+            rpc.subscriptions.into_iter().map(Into::into).collect();
+
+        // Update connected peers topics
+        if !subscriptions.is_empty() {
+            self.handle_received_subscriptions(&subscriptions, propagation_source);
+        }
+
+        // TODO: Review the concept of "gray-listing" peers
+        // Check if peer is gray-listed in which case we ignore the event
+        if let (true, _) =
+            self.score_below_threshold(propagation_source, |pst| pst.graylist_threshold)
+        {
+            debug!("RPC Dropped from gray-listed peer {}", propagation_source);
+            return;
+        }
+
+        // Handle messages
+        let mut valid_messages = Vec::with_capacity(rpc.publish.len());
+        let mut invalid_messages = Vec::new();
+
+        for message in rpc.publish.into_iter() {
+            if let Err(err) = self.message_validator.validate(&message) {
+                // If the message is invalid, add it to the invalid messages and continue
+                // processing the other messages.
+                let raw_message = RawMessage {
+                    source: None, // don't inform the application
+                    data: message.data.map(Into::into).unwrap_or_default(),
+                    sequence_number: None, // don't inform the application
+                    topic: TopicHash::from_raw(&message.topic),
+                    signature: None, // don't inform the application
+                    key: message.key.map(Into::into),
+                };
+                invalid_messages.push((raw_message, err));
+
+                continue;
+            }
+
+            // This message has passed all validation, add it to the validated messages.
+            valid_messages.push(message.into());
+        }
+
+        // Handle any invalid messages from this peer
+        if self.peer_score.is_some() {
+            for (raw_message, validation_error) in invalid_messages {
+                self.handle_invalid_message(
+                    propagation_source,
+                    &raw_message,
+                    RejectReason::ValidationError(validation_error),
+                )
+            }
+        } else {
+            // log the invalid messages
+            for (message, validation_error) in invalid_messages {
+                warn!(
+                    "Invalid message. Reason: {:?} propagation_peer {} source {:?}",
+                    validation_error,
+                    propagation_source.to_string(),
+                    message.source
+                );
+            }
+        }
+
+        for (count, raw_message) in valid_messages.into_iter().enumerate() {
+            // Only process the amount of messages the configuration allows.
+            if self.config.max_messages_per_rpc().is_some()
+                && Some(count) >= self.config.max_messages_per_rpc()
+            {
+                warn!("Received more messages than permitted. Ignoring further messages. Processed: {}", count);
+                break;
+            }
+            self.handle_received_message(raw_message, propagation_source);
+        }
+
+        // Handle control messages
+        let control_msgs: Vec<ControlAction> = rpc
+            .control
+            .map(|rpc_control| {
+                // Collect the gossipsub control messages
+                let ihave_msgs_iter = rpc_control.ihave.into_iter().map(Into::into);
+                let iwant_msgs_iter = rpc_control.iwant.into_iter().map(Into::into);
+                let graft_msgs_iter = rpc_control.graft.into_iter().map(Into::into);
+                let prune_msgs_iter = rpc_control.prune.into_iter().map(Into::into);
+
+                ihave_msgs_iter
+                    .chain(iwant_msgs_iter)
+                    .chain(graft_msgs_iter)
+                    .chain(prune_msgs_iter)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // group some control messages, this minimises SendEvents (code is simplified to handle each event at a time however)
+        let mut ihave_msgs = vec![];
+        let mut graft_msgs = vec![];
+        let mut prune_msgs = vec![];
+        for control_msg in control_msgs {
+            match control_msg {
+                ControlAction::IHave {
+                    topic_hash,
+                    message_ids,
+                } => {
+                    ihave_msgs.push((topic_hash, message_ids));
+                }
+                ControlAction::IWant { message_ids } => {
+                    self.handle_iwant(propagation_source, message_ids)
+                }
+                ControlAction::Graft { topic_hash } => graft_msgs.push(topic_hash),
+                ControlAction::Prune {
+                    topic_hash,
+                    peers,
+                    backoff,
+                } => prune_msgs.push((topic_hash, peers, backoff)),
+            }
+        }
+        if !ihave_msgs.is_empty() {
+            self.handle_ihave(propagation_source, ihave_msgs);
+        }
+        if !graft_msgs.is_empty() {
+            self.handle_graft(propagation_source, graft_msgs);
+        }
+        if !prune_msgs.is_empty() {
+            self.handle_prune(propagation_source, prune_msgs);
+        }
+    }
+
     /// Handles an IHAVE control message. Checks our cache of messages. If the message is unknown,
     /// requests it with an IWANT control message.
     fn handle_ihave(&mut self, peer_id: &PeerId, ihave_msgs: Vec<(TopicHash, Vec<MessageId>)>) {
@@ -1929,7 +2071,6 @@ where
 
         true
     }
-
     /// Handles a newly received [`RawMessage`].
     ///
     /// Forwards the message to all peers in the mesh.
@@ -3580,93 +3721,7 @@ where
                     }
                 }
             }
-            HandlerEvent::Message {
-                rpc,
-                invalid_messages,
-            } => {
-                // Handle the gossipsub RPC
-
-                // Handle subscriptions
-                // Update connected peers topics
-                if !rpc.subscriptions.is_empty() {
-                    self.handle_received_subscriptions(&rpc.subscriptions, &propagation_source);
-                }
-
-                // Check if peer is gray-listed in which case we ignore the event
-                if let (true, _) =
-                    self.score_below_threshold(&propagation_source, |pst| pst.graylist_threshold)
-                {
-                    debug!("RPC Dropped from gray-listed peer {}", propagation_source);
-                    return;
-                }
-
-                // Handle any invalid messages from this peer
-                if self.peer_score.is_some() {
-                    for (raw_message, validation_error) in invalid_messages {
-                        self.handle_invalid_message(
-                            &propagation_source,
-                            &raw_message,
-                            RejectReason::ValidationError(validation_error),
-                        )
-                    }
-                } else {
-                    // log the invalid messages
-                    for (message, validation_error) in invalid_messages {
-                        warn!(
-                            "Invalid message. Reason: {:?} propagation_peer {} source {:?}",
-                            validation_error,
-                            propagation_source.to_string(),
-                            message.source
-                        );
-                    }
-                }
-
-                // Handle messages
-                for (count, raw_message) in rpc.messages.into_iter().enumerate() {
-                    // Only process the amount of messages the configuration allows.
-                    if self.config.max_messages_per_rpc().is_some()
-                        && Some(count) >= self.config.max_messages_per_rpc()
-                    {
-                        warn!("Received more messages than permitted. Ignoring further messages. Processed: {}", count);
-                        break;
-                    }
-                    self.handle_received_message(raw_message, &propagation_source);
-                }
-
-                // Handle control messages
-                // group some control messages, this minimises SendEvents (code is simplified to handle each event at a time however)
-                let mut ihave_msgs = vec![];
-                let mut graft_msgs = vec![];
-                let mut prune_msgs = vec![];
-                for control_msg in rpc.control_msgs {
-                    match control_msg {
-                        ControlAction::IHave {
-                            topic_hash,
-                            message_ids,
-                        } => {
-                            ihave_msgs.push((topic_hash, message_ids));
-                        }
-                        ControlAction::IWant { message_ids } => {
-                            self.handle_iwant(&propagation_source, message_ids)
-                        }
-                        ControlAction::Graft { topic_hash } => graft_msgs.push(topic_hash),
-                        ControlAction::Prune {
-                            topic_hash,
-                            peers,
-                            backoff,
-                        } => prune_msgs.push((topic_hash, peers, backoff)),
-                    }
-                }
-                if !ihave_msgs.is_empty() {
-                    self.handle_ihave(&propagation_source, ihave_msgs);
-                }
-                if !graft_msgs.is_empty() {
-                    self.handle_graft(&propagation_source, graft_msgs);
-                }
-                if !prune_msgs.is_empty() {
-                    self.handle_prune(&propagation_source, prune_msgs);
-                }
-            }
+            HandlerEvent::Rpc(rpc) => self.handle_received_rpc(&propagation_source, rpc),
         }
     }
 
@@ -3692,6 +3747,13 @@ where
 
         Poll::Pending
     }
+}
+
+impl<C, F> Behaviour<C, F>
+where
+    C: 'static + DataTransform + Send,
+    F: 'static + Send + TopicSubscriptionFilter,
+{
 }
 
 impl<C: DataTransform, F: TopicSubscriptionFilter> fmt::Debug for Behaviour<C, F> {
