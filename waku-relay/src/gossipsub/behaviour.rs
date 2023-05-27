@@ -1475,54 +1475,52 @@ where
         }
 
         // Handle control messages
-        let control_msgs: Vec<ControlAction> = rpc
-            .control
-            .map(|rpc_control| {
-                // Collect the gossipsub control messages
-                let ihave_msgs_iter = rpc_control.ihave.into_iter().map(Into::into);
-                let iwant_msgs_iter = rpc_control.iwant.into_iter().map(Into::into);
-                let graft_msgs_iter = rpc_control.graft.into_iter().map(Into::into);
-                let prune_msgs_iter = rpc_control.prune.into_iter().map(Into::into);
-
-                ihave_msgs_iter
-                    .chain(iwant_msgs_iter)
-                    .chain(graft_msgs_iter)
-                    .chain(prune_msgs_iter)
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        // group some control messages, this minimises SendEvents (code is simplified to handle each event at a time however)
-        let mut ihave_msgs = vec![];
-        let mut graft_msgs = vec![];
-        let mut prune_msgs = vec![];
-        for control_msg in control_msgs {
-            match control_msg {
-                ControlAction::IHave {
-                    topic_hash,
-                    message_ids,
-                } => {
-                    ihave_msgs.push((topic_hash, message_ids));
-                }
-                ControlAction::IWant { message_ids } => {
-                    self.handle_iwant(propagation_source, message_ids)
-                }
-                ControlAction::Graft { topic_hash } => graft_msgs.push(topic_hash),
-                ControlAction::Prune {
-                    topic_hash,
-                    peers,
-                    backoff,
-                } => prune_msgs.push((topic_hash, peers, backoff)),
+        if let Some(rpc_control) = rpc.control {
+            for iwant in rpc_control.iwant {
+                let iwant_msgs = iwant.message_ids.into_iter().map(Into::into).collect();
+                self.handle_iwant(propagation_source, iwant_msgs);
             }
-        }
-        if !ihave_msgs.is_empty() {
-            self.handle_ihave(propagation_source, ihave_msgs);
-        }
-        if !graft_msgs.is_empty() {
-            self.handle_graft(propagation_source, graft_msgs);
-        }
-        if !prune_msgs.is_empty() {
-            self.handle_prune(propagation_source, prune_msgs);
+
+            let ihave_msgs = rpc_control
+                .ihave
+                .into_iter()
+                .map(|ihave| {
+                    (
+                        TopicHash::from_raw(ihave.topic_id.unwrap_or_default()),
+                        ihave.message_ids.into_iter().map(Into::into).collect(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            if !ihave_msgs.is_empty() {
+                self.handle_ihave(propagation_source, ihave_msgs);
+            }
+
+            let graft_msgs = rpc_control
+                .graft
+                .into_iter()
+                .map(|graft| TopicHash::from_raw(graft.topic_id.unwrap_or_default()))
+                .collect::<Vec<_>>();
+            if !graft_msgs.is_empty() {
+                self.handle_graft(propagation_source, graft_msgs);
+            }
+
+            let prune_msgs = rpc_control
+                .prune
+                .into_iter()
+                .map(|prune| {
+                    let peers = prune
+                        .peers
+                        .into_iter()
+                        .filter_map(|info| PeerInfo::try_from(info).ok()) // filter out invalid peers
+                        .collect();
+                    let topic_hash = TopicHash::from_raw(prune.topic_id.unwrap_or_default());
+
+                    (topic_hash, peers, prune.backoff)
+                })
+                .collect::<Vec<_>>();
+            if !prune_msgs.is_empty() {
+                self.handle_prune(propagation_source, prune_msgs);
+            }
         }
     }
 
