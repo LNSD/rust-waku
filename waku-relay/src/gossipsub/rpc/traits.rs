@@ -38,7 +38,6 @@ impl From<MessageProto> for RawMessage {
             topic: TopicHash::from_raw(msg.topic),
             signature: msg.signature.map(Into::into),
             key: msg.key.map(Into::into),
-            validated: false,
         }
     }
 }

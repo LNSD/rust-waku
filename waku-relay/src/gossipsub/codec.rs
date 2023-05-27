@@ -72,7 +72,6 @@ impl Decoder for Codec {
                     topic: TopicHash::from_raw(&message.topic),
                     signature: None, // don't inform the application
                     key: message.key.map(Into::into),
-                    validated: false,
                 };
                 invalid_messages.push((raw_message, err));
 

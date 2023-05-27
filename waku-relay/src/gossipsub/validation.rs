@@ -1,5 +1,7 @@
 use bytes::Bytes;
-use libp2p::identity::{Keypair, PublicKey};
+#[cfg(test)]
+use libp2p::identity::Keypair;
+use libp2p::identity::PublicKey;
 use libp2p::PeerId;
 use log::{debug, warn};
 use prost::Message as _;

@@ -27,7 +27,31 @@ use log::{debug, trace};
 
 use crate::gossipsub::message_id::MessageId;
 use crate::gossipsub::topic::TopicHash;
-use crate::gossipsub::types::RawMessage;
+
+/// A message received by the gossipsub system and stored locally in caches..
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct CachedMessage {
+    /// Id of the peer that published this message.
+    pub source: Option<PeerId>,
+
+    /// Content of the message. Its meaning is out of scope of this library.
+    pub data: Vec<u8>,
+
+    /// A random sequence number.
+    pub sequence_number: Option<u64>,
+
+    /// The topic this message belongs to
+    pub topic: TopicHash,
+
+    /// The signature of the message if it's signed.
+    pub signature: Option<Vec<u8>>,
+
+    /// The public key of the message if it is signed and the source [`PeerId`] cannot be inlined.
+    pub key: Option<Vec<u8>>,
+
+    /// Flag indicating if this message has been validated by the application or not.
+    pub validated: bool,
+}
 
 /// CacheEntry stored in the history.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -39,7 +63,7 @@ pub(crate) struct CacheEntry {
 /// MessageCache struct holding history of messages.
 #[derive(Clone)]
 pub(crate) struct MessageCache {
-    msgs: HashMap<MessageId, (RawMessage, HashSet<PeerId>)>,
+    msgs: HashMap<MessageId, (CachedMessage, HashSet<PeerId>)>,
     /// For every message and peer the number of times this peer asked for the message
     iwant_counts: HashMap<MessageId, HashMap<PeerId, u32>>,
     history: Vec<Vec<CacheEntry>>,
@@ -73,7 +97,7 @@ impl MessageCache {
     /// Put a message into the memory cache.
     ///
     /// Returns true if the message didn't already exist in the cache.
-    pub(crate) fn put(&mut self, message_id: &MessageId, msg: RawMessage) -> bool {
+    pub(crate) fn put(&mut self, message_id: &MessageId, msg: CachedMessage) -> bool {
         match self.msgs.entry(message_id.clone()) {
             Entry::Occupied(_) => {
                 // Don't add duplicate entries to the cache.
@@ -108,7 +132,7 @@ impl MessageCache {
 
     /// Get a message with `message_id`
     #[cfg(test)]
-    pub(crate) fn get(&self, message_id: &MessageId) -> Option<&RawMessage> {
+    pub(crate) fn get(&self, message_id: &MessageId) -> Option<&CachedMessage> {
         self.msgs.get(message_id).map(|(message, _)| message)
     }
 
@@ -118,7 +142,7 @@ impl MessageCache {
         &mut self,
         message_id: &MessageId,
         peer: &PeerId,
-    ) -> Option<(&RawMessage, u32)> {
+    ) -> Option<(&CachedMessage, u32)> {
         let iwant_counts = &mut self.iwant_counts;
         self.msgs.get(message_id).and_then(|(message, _)| {
             if !message.validated {
@@ -143,7 +167,7 @@ impl MessageCache {
     pub(crate) fn validate(
         &mut self,
         message_id: &MessageId,
-    ) -> Option<(&RawMessage, HashSet<PeerId>)> {
+    ) -> Option<(&CachedMessage, HashSet<PeerId>)> {
         self.msgs.get_mut(message_id).map(|(message, known_peers)| {
             message.validated = true;
             // Clear the known peers list (after a message is validated, it is forwarded and we no
@@ -210,7 +234,7 @@ impl MessageCache {
     pub(crate) fn remove(
         &mut self,
         message_id: &MessageId,
-    ) -> Option<(RawMessage, HashSet<PeerId>)> {
+    ) -> Option<(CachedMessage, HashSet<PeerId>)> {
         //We only remove the message from msgs and iwant_count and keep the message_id in the
         // history vector. Zhe id in the history vector will simply be ignored on popping.
 

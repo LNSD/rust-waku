@@ -32,60 +32,6 @@ use crate::gossipsub::config::{ValidationMode, Version};
 use crate::gossipsub::types::PeerKind;
 use crate::gossipsub::Config;
 
-/// Implementation of [`InboundUpgrade`] and [`OutboundUpgrade`] for the Gossipsub protocol.
-#[derive(Debug, Clone)]
-pub struct ProtocolConfig {
-    /// The Gossipsub protocol id to listen on.
-    protocol_ids: Vec<ProtocolId>,
-    /// The maximum transmit size for a packet.
-    max_transmit_size: usize,
-    /// Determines the level of validation to be done on incoming messages.
-    validation_mode: ValidationMode,
-}
-
-impl ProtocolConfig {
-    /// Builds a new [`ProtocolConfig`].
-    ///
-    /// Sets the maximum gossip transmission size.
-    pub fn new(gossipsub_config: &Config) -> ProtocolConfig {
-        let mut protocol_ids = match gossipsub_config.custom_id_version() {
-            Some(v) => match v {
-                Version::V1_0 => vec![ProtocolId::new(
-                    gossipsub_config.protocol_id(),
-                    PeerKind::Gossipsub,
-                    false,
-                )],
-                Version::V1_1 => vec![ProtocolId::new(
-                    gossipsub_config.protocol_id(),
-                    PeerKind::Gossipsubv1_1,
-                    false,
-                )],
-            },
-            None => {
-                vec![
-                    ProtocolId::new(
-                        gossipsub_config.protocol_id(),
-                        PeerKind::Gossipsubv1_1,
-                        true,
-                    ),
-                    ProtocolId::new(gossipsub_config.protocol_id(), PeerKind::Gossipsub, true),
-                ]
-            }
-        };
-
-        // add floodsub support if enabled.
-        if gossipsub_config.support_floodsub() {
-            protocol_ids.push(ProtocolId::new("", PeerKind::Floodsub, false));
-        }
-
-        ProtocolConfig {
-            protocol_ids,
-            max_transmit_size: gossipsub_config.max_transmit_size(),
-            validation_mode: gossipsub_config.validation_mode().clone(),
-        }
-    }
-}
-
 /// The protocol ID
 #[derive(Clone, Debug)]
 pub struct ProtocolId {
@@ -123,7 +69,61 @@ impl ProtocolName for ProtocolId {
     }
 }
 
-impl UpgradeInfo for ProtocolConfig {
+/// Implementation of [`InboundUpgrade`] and [`OutboundUpgrade`] for the Gossipsub protocol.
+#[derive(Debug, Clone)]
+pub struct ProtocolUpgrade {
+    /// The Gossipsub protocol id to listen on.
+    protocol_ids: Vec<ProtocolId>,
+    /// The maximum transmit size for a packet.
+    max_transmit_size: usize,
+    /// Determines the level of validation to be done on incoming messages.
+    validation_mode: ValidationMode,
+}
+
+impl ProtocolUpgrade {
+    /// Builds a new [`ProtocolUpgrade`].
+    ///
+    /// Sets the maximum gossip transmission size.
+    pub fn new(gossipsub_config: &Config) -> ProtocolUpgrade {
+        let mut protocol_ids = match gossipsub_config.custom_id_version() {
+            Some(v) => match v {
+                Version::V1_0 => vec![ProtocolId::new(
+                    gossipsub_config.protocol_id(),
+                    PeerKind::Gossipsub,
+                    false,
+                )],
+                Version::V1_1 => vec![ProtocolId::new(
+                    gossipsub_config.protocol_id(),
+                    PeerKind::Gossipsubv1_1,
+                    false,
+                )],
+            },
+            None => {
+                vec![
+                    ProtocolId::new(
+                        gossipsub_config.protocol_id(),
+                        PeerKind::Gossipsubv1_1,
+                        true,
+                    ),
+                    ProtocolId::new(gossipsub_config.protocol_id(), PeerKind::Gossipsub, true),
+                ]
+            }
+        };
+
+        // add floodsub support if enabled.
+        if gossipsub_config.support_floodsub() {
+            protocol_ids.push(ProtocolId::new("", PeerKind::Floodsub, false));
+        }
+
+        ProtocolUpgrade {
+            protocol_ids,
+            max_transmit_size: gossipsub_config.max_transmit_size(),
+            validation_mode: gossipsub_config.validation_mode().clone(),
+        }
+    }
+}
+
+impl UpgradeInfo for ProtocolUpgrade {
     type Info = ProtocolId;
     type InfoIter = Vec<Self::Info>;
 
@@ -132,7 +132,7 @@ impl UpgradeInfo for ProtocolConfig {
     }
 }
 
-impl<TSocket> InboundUpgrade<TSocket> for ProtocolConfig
+impl<TSocket> InboundUpgrade<TSocket> for ProtocolUpgrade
 where
     TSocket: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -151,7 +151,7 @@ where
     }
 }
 
-impl<TSocket> OutboundUpgrade<TSocket> for ProtocolConfig
+impl<TSocket> OutboundUpgrade<TSocket> for ProtocolUpgrade
 where
     TSocket: AsyncWrite + AsyncRead + Unpin + Send + 'static,
 {
