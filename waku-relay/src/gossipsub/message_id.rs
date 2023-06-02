@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use libp2p::PeerId;
+use libp2p::identity::PeerId;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 

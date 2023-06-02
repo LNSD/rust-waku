@@ -18,8 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::Entry;
 use std::fmt;
 
 use libp2p::PeerId;

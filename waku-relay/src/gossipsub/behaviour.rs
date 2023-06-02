@@ -28,22 +28,23 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures::StreamExt;
-use instant::SystemTime;
-use libp2p::core::{multiaddr::Protocol::Ip4, multiaddr::Protocol::Ip6, Endpoint, Multiaddr};
-use libp2p::identity::Keypair;
-use libp2p::identity::PeerId;
+use futures_ticker::Ticker;
+use instant::{Instant, SystemTime};
+use libp2p::core::{Endpoint, Multiaddr, multiaddr::Protocol::Ip4, multiaddr::Protocol::Ip6};
+use libp2p::identity::{Keypair, PeerId};
 use libp2p::swarm::{
     behaviour::{AddressChange, ConnectionClosed, ConnectionEstablished, FromSwarm},
-    dial_opts::DialOpts,
-    ConnectionDenied, ConnectionId, NetworkBehaviour, NotifyHandler, PollParameters, THandler,
+    ConnectionDenied,
+    ConnectionId, dial_opts::DialOpts, NetworkBehaviour, NotifyHandler, PollParameters, THandler,
     THandlerInEvent, THandlerOutEvent, ToSwarm,
 };
 use log::{debug, error, trace, warn};
 use prometheus_client::registry::Registry;
 use prost::Message as _;
 use rand::{seq::SliceRandom, thread_rng};
-use wasm_timer::{Instant, Interval};
 
+use crate::gossipsub::{FastMessageId, TopicScoreParams};
+use crate::gossipsub::{PublishError, SubscriptionError};
 use crate::gossipsub::backoff::BackoffStorage;
 use crate::gossipsub::codec::SIGNING_PREFIX;
 use crate::gossipsub::config::{Config, ValidationMode};
@@ -68,8 +69,6 @@ use crate::gossipsub::validation::{
     AnonymousMessageValidator, MessageValidator, NoopMessageValidator, PermissiveMessageValidator,
     StrictMessageValidator, ValidationError,
 };
-use crate::gossipsub::{FastMessageId, TopicScoreParams};
-use crate::gossipsub::{PublishError, SubscriptionError};
 
 // A data structure for storing configuration for publishing messages. See [`MessageAuthenticity`]
 /// for further details.
@@ -476,7 +475,7 @@ pub struct Behaviour<D = IdentityTransform, F = AllowAllSubscriptionFilter> {
     mcache: MessageCache,
 
     /// Heartbeat interval stream.
-    heartbeat: Interval,
+    heartbeat: Ticker,
 
     /// Number of heartbeats since the beginning of time; this allows us to amortize some resource
     /// clean up -- eg backoff clean up.
@@ -494,7 +493,7 @@ pub struct Behaviour<D = IdentityTransform, F = AllowAllSubscriptionFilter> {
 
     /// Stores optional peer score data together with thresholds, decay interval and gossip
     /// promises.
-    peer_score: Option<(PeerScore, PeerScoreThresholds, Interval, GossipPromises)>,
+    peer_score: Option<(PeerScore, PeerScoreThresholds, Ticker, GossipPromises)>,
 
     /// Counts the number of `IHAVE` received from each peer since the last heartbeat.
     count_received_ihave: HashMap<PeerId, usize>,
@@ -657,9 +656,9 @@ where
                 config.backoff_slack(),
             ),
             mcache: MessageCache::new(config.history_gossip(), config.history_length()),
-            heartbeat: Interval::new_at(
-                Instant::now() + config.heartbeat_initial_delay(),
+            heartbeat: Ticker::new_with_next(
                 config.heartbeat_interval(),
+                config.heartbeat_initial_delay(),
             ),
             heartbeat_ticks: 0,
             px_peers: HashSet::new(),
@@ -1116,7 +1115,7 @@ where
             return Err("Peer score set twice".into());
         }
 
-        let interval = Interval::new(params.decay_interval);
+        let interval = Ticker::new(params.decay_interval);
         let peer_score = PeerScore::new_with_message_delivery_time_callback(params, callback);
         self.peer_score = Some((peer_score, threshold, interval, GossipPromises::default()));
         Ok(())
@@ -1383,7 +1382,7 @@ where
     }
 
     fn score_below_threshold_from_scores(
-        peer_score: &Option<(PeerScore, PeerScoreThresholds, Interval, GossipPromises)>,
+        peer_score: &Option<(PeerScore, PeerScoreThresholds, Ticker, GossipPromises)>,
         peer_id: &PeerId,
         threshold: impl Fn(&PeerScoreThresholds) -> f64,
     ) -> (bool, f64) {
@@ -3734,12 +3733,12 @@ where
 
         // update scores
         if let Some((peer_score, _, interval, _)) = &mut self.peer_score {
-            while let Poll::Ready(Some(())) = interval.poll_next_unpin(cx) {
+            while let Poll::Ready(Some(_)) = interval.poll_next_unpin(cx) {
                 peer_score.refresh_scores();
             }
         }
 
-        while let Poll::Ready(Some(())) = self.heartbeat.poll_next_unpin(cx) {
+        while let Poll::Ready(Some(_)) = self.heartbeat.poll_next_unpin(cx) {
             self.heartbeat();
         }
 

@@ -24,13 +24,12 @@ use std::pin::Pin;
 use asynchronous_codec::Framed;
 use futures::future;
 use futures::prelude::*;
-use libp2p::core::{ProtocolName, UpgradeInfo};
-use libp2p::{InboundUpgrade, OutboundUpgrade};
+use libp2p::core::{InboundUpgrade, OutboundUpgrade, ProtocolName, UpgradeInfo};
 
 use crate::gossipsub::codec::Codec;
+use crate::gossipsub::Config;
 use crate::gossipsub::config::Version;
 use crate::gossipsub::types::PeerKind;
-use crate::gossipsub::Config;
 
 /// The protocol ID
 #[derive(Clone, Debug)]
