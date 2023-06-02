@@ -1,12 +1,13 @@
-use libp2p::PeerId;
+use libp2p::identity::PeerId;
 use prost::Message;
 use strum_macros::Display;
 
-use crate::gossipsub;
+use waku_core::message::MAX_WAKU_MESSAGE_SIZE;
 use waku_core::message::proto::waku::message::v1::WakuMessage as WakuMessageProto;
 use waku_core::message::WakuMessage;
-use waku_core::message::MAX_WAKU_MESSAGE_SIZE;
 use waku_core::pubsub_topic::PubsubTopic;
+
+use crate::gossipsub;
 
 #[derive(Debug, Display)]
 pub enum Event {

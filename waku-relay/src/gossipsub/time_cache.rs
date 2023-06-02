@@ -28,7 +28,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use fnv::FnvHashMap;
-use wasm_timer::Instant;
+use instant::Instant;
 
 struct ExpiringElement<Element> {
     /// The element that expires

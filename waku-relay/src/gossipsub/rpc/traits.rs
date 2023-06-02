@@ -1,15 +1,15 @@
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
-use libp2p::PeerId;
+use libp2p::identity::PeerId;
 
+use crate::gossipsub::{RawMessage, Rpc, TopicHash};
 use crate::gossipsub::rpc::proto::waku::relay::v2::{
-    rpc::SubOpts as SubOptsProto, ControlGraft as ControlGraftProto,
-    ControlIHave as ControlIHaveProto, ControlIHave, ControlIWant as ControlIWantProto,
-    ControlMessage as ControlMessageProto, ControlPrune as ControlPruneProto,
-    Message as MessageProto, PeerInfo as PeerInfoProto, Rpc as RpcProto,
+    ControlGraft as ControlGraftProto, ControlIHave as ControlIHaveProto,
+    ControlIHave, ControlIWant as ControlIWantProto, ControlMessage as ControlMessageProto,
+    ControlPrune as ControlPruneProto, Message as MessageProto,
+    PeerInfo as PeerInfoProto, Rpc as RpcProto, rpc::SubOpts as SubOptsProto,
 };
 use crate::gossipsub::types::{ControlAction, PeerInfo, Subscription, SubscriptionAction};
-use crate::gossipsub::{RawMessage, Rpc, TopicHash};
 
 impl From<RawMessage> for MessageProto {
     /// Converts the message into protobuf format.

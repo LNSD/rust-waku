@@ -25,19 +25,19 @@ use std::collections::{hash_map, HashMap, HashSet};
 use std::net::IpAddr;
 use std::time::Duration;
 
-use libp2p::PeerId;
+use instant::Instant;
+use libp2p::identity::PeerId;
 use log::{debug, trace, warn};
-use wasm_timer::Instant;
 
 pub use params::{
-    score_parameter_decay, score_parameter_decay_with_base, PeerScoreParams, PeerScoreThresholds,
+    PeerScoreParams, PeerScoreThresholds, score_parameter_decay, score_parameter_decay_with_base,
     TopicScoreParams,
 };
 
+use crate::gossipsub::{MessageId, TopicHash};
 use crate::gossipsub::metrics::{Metrics, Penalty};
 use crate::gossipsub::time_cache::TimeCache;
 use crate::gossipsub::validation::ValidationError;
-use crate::gossipsub::{MessageId, TopicHash};
 
 mod params;
 

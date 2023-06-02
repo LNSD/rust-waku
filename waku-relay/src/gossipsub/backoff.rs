@@ -24,9 +24,9 @@ use std::collections::{
     HashSet,
 };
 use std::time::Duration;
+use instant::Instant;
 
-use libp2p::PeerId;
-use wasm_timer::Instant;
+use libp2p::identity::PeerId;
 
 use crate::gossipsub::topic::TopicHash;
 
