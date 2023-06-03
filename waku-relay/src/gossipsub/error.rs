@@ -22,9 +22,7 @@
 
 use std::io;
 
-use libp2p::core::upgrade::ProtocolError;
 use libp2p::identity::SigningError;
-use thiserror::Error;
 
 /// Error associated with publishing a gossipsub message.
 #[derive(Debug)]
@@ -86,23 +84,6 @@ impl From<SigningError> for PublishError {
     fn from(error: SigningError) -> Self {
         PublishError::SigningError(error)
     }
-}
-
-/// Errors that can occur in the protocols handler.
-#[derive(Debug, Error)]
-pub enum HandlerError {
-    #[error("The maximum number of inbound substreams created has been exceeded.")]
-    MaxInboundSubstreams,
-    #[error("The maximum number of outbound substreams created has been exceeded.")]
-    MaxOutboundSubstreams,
-    #[error("The message exceeds the maximum transmission size.")]
-    MaxTransmissionSize,
-    #[error("Protocol negotiation timeout.")]
-    NegotiationTimeout,
-    #[error("Protocol negotiation failed.")]
-    NegotiationProtocolError(ProtocolError),
-    #[error("Failed to encode or decode")]
-    Codec(#[from] io::Error),
 }
 
 impl From<io::Error> for PublishError {
