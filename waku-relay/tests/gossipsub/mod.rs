@@ -1,1 +1,1 @@
-pub(crate) mod smoke;
+pub(crate) mod pubsub;
