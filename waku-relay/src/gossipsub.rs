@@ -158,7 +158,6 @@ pub use self::subscription_filter::{
 pub use self::topic::{Hasher, Topic, TopicHash};
 pub use self::transform::{DataTransform, IdentityTransform};
 pub use self::types::{Message, MessageAcceptance, RawMessage, Rpc};
-pub use validation::ValidationError;
 
 mod backoff;
 mod behaviour;
@@ -173,6 +172,8 @@ mod metrics;
 mod peer_score;
 mod protocol;
 mod rpc;
+mod seq_no;
+mod signing;
 mod subscription_filter;
 mod time_cache;
 mod topic;
