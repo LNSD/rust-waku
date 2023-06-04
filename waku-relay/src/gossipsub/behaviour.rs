@@ -30,12 +30,12 @@ use bytes::Bytes;
 use futures::StreamExt;
 use futures_ticker::Ticker;
 use instant::{Instant, SystemTime};
-use libp2p::core::{Endpoint, Multiaddr, multiaddr::Protocol::Ip4, multiaddr::Protocol::Ip6};
+use libp2p::core::{multiaddr::Protocol::Ip4, multiaddr::Protocol::Ip6, Endpoint, Multiaddr};
 use libp2p::identity::{Keypair, PeerId};
 use libp2p::swarm::{
     behaviour::{AddressChange, ConnectionClosed, ConnectionEstablished, FromSwarm},
-    ConnectionDenied,
-    ConnectionId, dial_opts::DialOpts, NetworkBehaviour, NotifyHandler, PollParameters, THandler,
+    dial_opts::DialOpts,
+    ConnectionDenied, ConnectionId, NetworkBehaviour, NotifyHandler, PollParameters, THandler,
     THandlerInEvent, THandlerOutEvent, ToSwarm,
 };
 use log::{debug, error, trace, warn};
@@ -43,8 +43,6 @@ use prometheus_client::registry::Registry;
 use prost::Message as _;
 use rand::{seq::SliceRandom, thread_rng};
 
-use crate::gossipsub::{FastMessageId, TopicScoreParams};
-use crate::gossipsub::{PublishError, SubscriptionError};
 use crate::gossipsub::backoff::BackoffStorage;
 use crate::gossipsub::codec::SIGNING_PREFIX;
 use crate::gossipsub::config::{Config, ValidationMode};
@@ -69,6 +67,8 @@ use crate::gossipsub::validation::{
     AnonymousMessageValidator, MessageValidator, NoopMessageValidator, PermissiveMessageValidator,
     StrictMessageValidator, ValidationError,
 };
+use crate::gossipsub::{FastMessageId, TopicScoreParams};
+use crate::gossipsub::{PublishError, SubscriptionError};
 
 // A data structure for storing configuration for publishing messages. See [`MessageAuthenticity`]
 /// for further details.

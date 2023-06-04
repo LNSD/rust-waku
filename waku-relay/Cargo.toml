@@ -35,6 +35,9 @@ assert_matches = "1.5.0"
 env_logger = "0.10.0"
 hex = "0.4.2"
 hex-literal = "0.4.1"
+libp2p = { version = "0.51.3", features = ["noise", "yamux", "secp256k1", "tokio", "gossipsub"] }
+pretty_env_logger = "0.5.0"
+tokio = { workspace = true, features = ["rt", "time", "macros"] }
 
 # Passing arguments to the docsrs builder in order to properly document cfg's.
 # More information: https://docs.rs/about/builds#cross-compiling

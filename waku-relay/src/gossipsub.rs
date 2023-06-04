@@ -101,12 +101,12 @@
 //! let local_key = Keypair::generate_ed25519();
 //! let local_peer_id = libp2p::identity::PeerId::from(local_key.public());
 //!
-//! // Set up an encrypted TCP Transport over the Mplex
+//! // Set up an encrypted TCP Transport over yamux
 //! // This is test transport (memory).
 //! let transport = MemoryTransport::default()
-//!            .upgrade(libp2p_core::upgrade::Version::V1)
-//!            .authenticate(libp2p_noise::NoiseAuthenticated::xx(&local_key).unwrap())
-//!            .multiplex(libp2p_mplex::MplexConfig::new())
+//!            .upgrade(libp2p::core::upgrade::Version::V1)
+//!            .authenticate(libp2p::noise::Config::new(&local_key).unwrap())
+//!            .multiplex(libp2p::yamux::Config::default())
 //!            .boxed();
 //!
 //! // Create a Gossipsub topic
@@ -126,15 +126,15 @@
 //!     // subscribe to the topic
 //!     gossipsub.subscribe(&topic);
 //!     // create the swarm (use an executor in a real example)
-//!     libp2p_swarm::Swarm::without_executor(
+//!     libp2p::swarm::SwarmBuilder::without_executor(
 //!         transport,
 //!         gossipsub,
 //!         local_peer_id,
-//!     )
+//!     ).build()
 //! };
 //!
 //! // Listen on a memory transport.
-//! let memory: Multiaddr = libp2p_core::multiaddr::Protocol::Memory(10).into();
+//! let memory: Multiaddr = libp2p::core::multiaddr::Protocol::Memory(10).into();
 //! let addr = swarm.listen_on(memory).unwrap();
 //! println!("Listening on {:?}", addr);
 //! ```
