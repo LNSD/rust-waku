@@ -13,8 +13,6 @@ pub struct Codec {
     codec: protobuf_codec::Codec<RpcProto>,
 }
 
-pub(crate) const SIGNING_PREFIX: &[u8] = b"libp2p-pubsub:";
-
 impl Codec {
     pub fn new(max_len_bytes: usize) -> Self {
         let codec = protobuf_codec::Codec::new(max_len_bytes);

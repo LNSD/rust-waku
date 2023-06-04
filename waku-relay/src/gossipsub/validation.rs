@@ -1,7 +1,5 @@
 use bytes::Bytes;
 use libp2p::identity::{PeerId, PublicKey};
-#[cfg(test)]
-use libp2p::identity::Keypair;
 use log::{debug, warn};
 use prost::Message as _;
 
@@ -9,7 +7,7 @@ use crate::gossipsub::rpc::MessageProto;
 
 pub(crate) const SIGNING_PREFIX: &[u8] = b"libp2p-pubsub:";
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, thiserror::Error)]
 pub enum ValidationError {
     /// The message has an invalid signature,
     InvalidSignature,
@@ -38,9 +36,7 @@ impl std::fmt::Display for ValidationError {
     }
 }
 
-impl std::error::Error for ValidationError {}
-
-pub trait MessageValidator: Send + Sync {
+pub trait MessageValidator {
     fn validate(&self, message: &MessageProto) -> Result<(), ValidationError>;
 }
 
@@ -92,26 +88,6 @@ fn verify_signature(message: &MessageProto) -> bool {
     }
 
     verify_message_signature(message, signature, public_key)
-}
-
-/// Generate the signature for a message.
-///
-/// The signature is calculated over the bytes "libp2p-pubsub:<protobuf-message>".
-#[cfg(test)]
-pub fn generate_message_signature(
-    message: &MessageProto,
-    keypair: &Keypair,
-) -> anyhow::Result<Vec<u8>> {
-    let mut msg = message.clone();
-    msg.signature = None;
-    msg.key = None;
-
-    // Construct the signature bytes
-    let mut sign_bytes = Vec::with_capacity(SIGNING_PREFIX.len() + msg.encoded_len());
-    sign_bytes.extend(SIGNING_PREFIX.to_vec());
-    sign_bytes.extend(msg.encode_to_vec());
-
-    Ok(keypair.sign(&sign_bytes)?)
 }
 
 /// Verify the signature of a message.
@@ -293,8 +269,15 @@ impl MessageValidator for StrictMessageValidator {
 mod tests {
     use assert_matches::assert_matches;
     use hex_literal::hex;
+    use libp2p::identity::Keypair;
+
+    use crate::gossipsub::signing::generate_message_signature;
 
     use super::*;
+
+    fn test_keypair() -> Keypair {
+        Keypair::generate_secp256k1()
+    }
 
     fn new_test_message(
         from: Option<PeerId>,
@@ -361,7 +344,7 @@ mod tests {
         #[test]
         fn test_error_signature_present() {
             // Given
-            let keypair = Keypair::generate_ed25519();
+            let keypair = test_keypair();
             let message = new_test_signed_message(&keypair, Some(1234));
             let validator = AnonymousMessageValidator::new();
 
@@ -418,7 +401,7 @@ mod tests {
         #[test]
         fn test_valid_fields_present() {
             // Given
-            let keypair = Keypair::generate_ed25519();
+            let keypair = test_keypair();
             let message = new_test_signed_message(&keypair, Some(1234));
             let validator = PermissiveMessageValidator::new();
 
@@ -450,7 +433,7 @@ mod tests {
         #[test]
         fn test_error_invalid_signature() {
             // Given
-            let keypair = Keypair::generate_ed25519();
+            let keypair = test_keypair();
             let message = {
                 let mut msg = new_test_signed_message(&keypair, Some(1234));
                 msg.signature = Some(Bytes::copy_from_slice(&hex!("cafebabe")));
@@ -472,7 +455,7 @@ mod tests {
         #[test]
         fn test_error_seqno_not_present() {
             // Given
-            let keypair = Keypair::generate_ed25519();
+            let keypair = test_keypair();
             let message = new_test_signed_message(&keypair, None);
             let validator = StrictMessageValidator::new();
 
@@ -486,7 +469,7 @@ mod tests {
         #[test]
         fn test_error_from_not_present() {
             // Given
-            let keypair = Keypair::generate_ed25519();
+            let keypair = test_keypair();
             let message = {
                 let mut msg = new_test_message(None, Some(1234), None, None);
 
@@ -511,7 +494,7 @@ mod tests {
         #[test]
         fn test_error_invalid_signature() {
             // Given
-            let keypair = Keypair::generate_ed25519();
+            let keypair = test_keypair();
             let message = {
                 let mut msg = new_test_signed_message(&keypair, Some(1234));
                 msg.signature = Some(Bytes::copy_from_slice(&hex!("cafebabe")));
@@ -529,7 +512,7 @@ mod tests {
         #[test]
         fn test_valid_no_key_present() {
             // Given
-            let keypair = Keypair::generate_ed25519();
+            let keypair = test_keypair();
             let msg = {
                 let mut message = new_test_signed_message(&keypair, Some(1234));
                 message.key = None;
@@ -547,7 +530,7 @@ mod tests {
         #[test]
         fn test_error_from_and_key_do_not_match() {
             // Given
-            let keypair = Keypair::generate_ed25519();
+            let keypair = test_keypair();
             let message = {
                 let mut msg = new_test_message(Some(PeerId::random()), Some(1234), None, None);
 
@@ -572,7 +555,7 @@ mod tests {
         #[test]
         fn test_error_valid_from_and_key_present() {
             // Given
-            let keypair = Keypair::generate_ed25519();
+            let keypair = test_keypair();
             let message = new_test_signed_message(&keypair, Some(1234));
             let validator = StrictMessageValidator::new();
 

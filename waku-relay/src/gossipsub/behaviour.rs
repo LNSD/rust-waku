@@ -29,7 +29,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures::StreamExt;
 use futures_ticker::Ticker;
-use instant::{Instant, SystemTime};
+use instant::Instant;
 use libp2p::core::{multiaddr::Protocol::Ip4, multiaddr::Protocol::Ip6, Endpoint, Multiaddr};
 use libp2p::identity::{Keypair, PeerId};
 use libp2p::swarm::{
@@ -44,7 +44,6 @@ use prost::Message as _;
 use rand::{seq::SliceRandom, thread_rng};
 
 use crate::gossipsub::backoff::BackoffStorage;
-use crate::gossipsub::codec::SIGNING_PREFIX;
 use crate::gossipsub::config::{Config, ValidationMode};
 use crate::gossipsub::gossip_promises::GossipPromises;
 use crate::gossipsub::handler::{Handler, HandlerEvent, HandlerIn};
@@ -54,6 +53,12 @@ use crate::gossipsub::metrics::{Churn, Config as MetricsConfig, Inclusion, Metri
 use crate::gossipsub::peer_score::{PeerScore, PeerScoreParams, PeerScoreThresholds, RejectReason};
 use crate::gossipsub::protocol::ProtocolUpgrade;
 use crate::gossipsub::rpc::{ControlMessageProto, MessageProto, RpcProto};
+use crate::gossipsub::seq_no::{
+    LinearSequenceNumber, MessageSeqNumberGenerator, RandomSequenceNumber,
+};
+use crate::gossipsub::signing::{
+    AuthorOnlySigner, Libp2pSigner, MessageSigner, NoopSigner, RandomAuthorSigner,
+};
 use crate::gossipsub::subscription_filter::{AllowAllSubscriptionFilter, TopicSubscriptionFilter};
 use crate::gossipsub::time_cache::{DuplicateCache, TimeCache};
 use crate::gossipsub::topic::{Hasher, Topic, TopicHash};
@@ -69,21 +74,6 @@ use crate::gossipsub::validation::{
 };
 use crate::gossipsub::{FastMessageId, TopicScoreParams};
 use crate::gossipsub::{PublishError, SubscriptionError};
-
-// A data structure for storing configuration for publishing messages. See [`MessageAuthenticity`]
-/// for further details.
-#[allow(clippy::large_enum_variant)]
-enum PublishConfig {
-    Signing {
-        keypair: Keypair,
-        author: PeerId,
-        inline_key: Option<Vec<u8>>,
-        last_seq_no: SequenceNumber,
-    },
-    Author(PeerId),
-    RandomAuthor,
-    Anonymous,
-}
 
 /// Determines if published messages should be signed or not.
 ///
@@ -126,86 +116,6 @@ impl MessageAuthenticity {
 
     pub fn is_anonymous(&self) -> bool {
         matches!(self, MessageAuthenticity::Anonymous)
-    }
-}
-
-impl PublishConfig {
-    pub(crate) fn get_own_id(&self) -> Option<&PeerId> {
-        match self {
-            Self::Signing { author, .. } => Some(author),
-            Self::Author(author) => Some(author),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Debug for PublishConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PublishConfig::Signing { author, .. } => {
-                f.write_fmt(format_args!("PublishConfig::Signing({author})"))
-            }
-            PublishConfig::Author(author) => {
-                f.write_fmt(format_args!("PublishConfig::Author({author})"))
-            }
-            PublishConfig::RandomAuthor => f.write_fmt(format_args!("PublishConfig::RandomAuthor")),
-            PublishConfig::Anonymous => f.write_fmt(format_args!("PublishConfig::Anonymous")),
-        }
-    }
-}
-
-impl From<MessageAuthenticity> for PublishConfig {
-    fn from(authenticity: MessageAuthenticity) -> Self {
-        match authenticity {
-            MessageAuthenticity::Signed(keypair) => {
-                let public_key = keypair.public();
-                let key_enc = public_key.encode_protobuf();
-                let key = if key_enc.len() <= 42 {
-                    // The public key can be inlined in [`rpc_proto::proto::::Message::from`], so we don't include it
-                    // specifically in the [`rpc_proto::proto::Message::key`] field.
-                    None
-                } else {
-                    // Include the protobuf encoding of the public key in the message.
-                    Some(key_enc)
-                };
-
-                PublishConfig::Signing {
-                    keypair,
-                    author: public_key.to_peer_id(),
-                    inline_key: key,
-                    last_seq_no: SequenceNumber::new(),
-                }
-            }
-            MessageAuthenticity::Author(peer_id) => PublishConfig::Author(peer_id),
-            MessageAuthenticity::RandomAuthor => PublishConfig::RandomAuthor,
-            MessageAuthenticity::Anonymous => PublishConfig::Anonymous,
-        }
-    }
-}
-
-/// A strictly linearly increasing sequence number.
-///
-/// We start from the current time as unix timestamp in milliseconds.
-#[derive(Debug)]
-struct SequenceNumber(u64);
-
-impl SequenceNumber {
-    fn new() -> Self {
-        let unix_timestamp = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("time to be linear")
-            .as_nanos();
-
-        Self(unix_timestamp as u64)
-    }
-
-    fn next(&mut self) -> u64 {
-        self.0 = self
-            .0
-            .checked_add(1)
-            .expect("to not exhaust u64 space for sequence numbers");
-
-        self.0
     }
 }
 
@@ -434,9 +344,6 @@ pub struct Behaviour<D = IdentityTransform, F = AllowAllSubscriptionFilter> {
     /// Pools non-urgent control messages between heartbeats.
     control_pool: HashMap<PeerId, Vec<ControlAction>>,
 
-    /// Information used for publishing messages.
-    publish_config: PublishConfig,
-
     /// An LRU Time cache for storing seen messages (based on their ID). This cache prevents
     /// duplicates from being propagated to the application and on the network.
     duplicate_cache: DuplicateCache<MessageId>,
@@ -524,7 +431,13 @@ pub struct Behaviour<D = IdentityTransform, F = AllowAllSubscriptionFilter> {
     metrics: Option<Metrics>,
 
     /// A validator for incoming messages.
-    message_validator: Box<dyn MessageValidator>,
+    message_validator: Box<dyn MessageValidator + Send>,
+
+    /// A generator for message sequence numbers.
+    message_seqno_generator: Option<Box<dyn MessageSeqNumberGenerator + Send>>,
+
+    /// A signer for outgoing messages.
+    message_signer: Box<dyn MessageSigner + Send>,
 }
 
 impl<D, F> Behaviour<D, F>
@@ -629,18 +542,33 @@ where
         // were received locally.
         validate_config(&privacy, config.validation_mode())?;
 
-        let message_validator: Box<dyn MessageValidator> = match &config.validation_mode() {
+        let message_validator: Box<dyn MessageValidator + Send> = match &config.validation_mode() {
             ValidationMode::Strict => Box::new(StrictMessageValidator::new()),
             ValidationMode::Permissive => Box::new(PermissiveMessageValidator::new()),
             ValidationMode::Anonymous => Box::new(AnonymousMessageValidator::new()),
             ValidationMode::None => Box::new(NoopMessageValidator::new()),
         };
 
+        let message_seqno_generator: Option<Box<dyn MessageSeqNumberGenerator + Send>> =
+            match &privacy {
+                MessageAuthenticity::Signed(_) => Some(Box::new(LinearSequenceNumber::new())),
+                MessageAuthenticity::Author(_) | MessageAuthenticity::RandomAuthor => {
+                    Some(Box::new(RandomSequenceNumber::new()))
+                }
+                MessageAuthenticity::Anonymous => None,
+            };
+
+        let message_signer: Box<dyn MessageSigner + Send> = match &privacy {
+            MessageAuthenticity::Signed(keypair) => Box::new(Libp2pSigner::new(keypair)),
+            MessageAuthenticity::Author(peer_id) => Box::new(AuthorOnlySigner::new(*peer_id)),
+            MessageAuthenticity::RandomAuthor => Box::new(RandomAuthorSigner::new()),
+            MessageAuthenticity::Anonymous => Box::new(NoopSigner::new()),
+        };
+
         Ok(Behaviour {
             metrics: metrics.map(|(registry, cfg)| Metrics::new(registry, cfg)),
             events: VecDeque::new(),
             control_pool: HashMap::new(),
-            publish_config: privacy.into(),
             duplicate_cache: DuplicateCache::new(config.duplicate_cache_time()),
             fast_message_id_cache: TimeCache::new(config.duplicate_cache_time()),
             topic_peers: HashMap::new(),
@@ -673,6 +601,8 @@ where
             subscription_filter,
             data_transform,
             message_validator,
+            message_seqno_generator,
+            message_signer,
         })
     }
 }
@@ -946,12 +876,10 @@ where
         };
         self.mcache.put(&msg_id, cached_message);
 
-        // If the message is anonymous or has a random author add it to the published message ids
+        // If the message is anonymous or has a random author add it to the published message IDs
         // cache.
-        if let PublishConfig::RandomAuthor | PublishConfig::Anonymous = self.publish_config {
-            if !self.config.allow_self_origin() {
-                self.published_message_ids.insert(msg_id.clone());
-            }
+        if self.message_signer.author().is_none() && !self.config.allow_self_origin() {
+            self.published_message_ids.insert(msg_id.clone());
         }
 
         // Send to peers we know are subscribed to the topic.
@@ -2050,7 +1978,7 @@ where
 
         // reject messages claiming to be from ourselves but not locally published
         let self_published = !self.config.allow_self_origin()
-            && if let Some(own_id) = self.publish_config.get_own_id() {
+            && if let Some(own_id) = self.message_signer.author() {
                 own_id != propagation_source
                     && raw_message.source.as_ref().map_or(false, |s| s == own_id)
             } else {
@@ -3119,82 +3047,19 @@ where
         topic: TopicHash,
         data: Vec<u8>,
     ) -> Result<RawMessage, PublishError> {
-        match &mut self.publish_config {
-            PublishConfig::Signing {
-                ref keypair,
-                author,
-                inline_key,
-                last_seq_no,
-            } => {
-                let sequence_number = last_seq_no.next();
+        let seq_no: Option<u64> = self.message_seqno_generator.as_mut().map(|gen| gen.next());
+        let mut message = MessageProto {
+            from: None,
+            data: Some(Bytes::from(data)),
+            seqno: seq_no.map(|seq_no| Bytes::copy_from_slice(&seq_no.to_be_bytes())),
+            topic: topic.into_string(),
+            signature: None,
+            key: None,
+        };
 
-                let signature = {
-                    let message = MessageProto {
-                        from: Some(Bytes::from(author.clone().to_bytes())),
-                        data: Some(Bytes::from(data.clone())),
-                        seqno: Some(Bytes::copy_from_slice(&sequence_number.to_be_bytes())),
-                        topic: topic.clone().into_string(),
-                        signature: None,
-                        key: None,
-                    };
+        self.message_signer.sign(&mut message)?;
 
-                    let mut buf = Vec::with_capacity(message.encoded_len());
-                    message.encode(&mut buf).expect("Encoding to succeed");
-
-                    // the signature is over the bytes "libp2p-pubsub:<protobuf-message>"
-                    let mut signature_bytes = SIGNING_PREFIX.to_vec();
-                    signature_bytes.extend_from_slice(&buf);
-                    Some(keypair.sign(&signature_bytes)?)
-                };
-
-                Ok(RawMessage {
-                    source: Some(*author),
-                    data,
-                    // To be interoperable with the go-implementation this is treated as a 64-bit
-                    // big-endian uint.
-                    sequence_number: Some(sequence_number),
-                    topic,
-                    signature,
-                    key: inline_key.clone(),
-                })
-            }
-            PublishConfig::Author(peer_id) => {
-                Ok(RawMessage {
-                    source: Some(*peer_id),
-                    data,
-                    // To be interoperable with the go-implementation this is treated as a 64-bit
-                    // big-endian uint.
-                    sequence_number: Some(rand::random()),
-                    topic,
-                    signature: None,
-                    key: None,
-                })
-            }
-            PublishConfig::RandomAuthor => {
-                Ok(RawMessage {
-                    source: Some(PeerId::random()),
-                    data,
-                    // To be interoperable with the go-implementation this is treated as a 64-bit
-                    // big-endian uint.
-                    sequence_number: Some(rand::random()),
-                    topic,
-                    signature: None,
-                    key: None,
-                })
-            }
-            PublishConfig::Anonymous => {
-                Ok(RawMessage {
-                    source: None,
-                    data,
-                    // To be interoperable with the go-implementation this is treated as a 64-bit
-                    // big-endian uint.
-                    sequence_number: None,
-                    topic,
-                    signature: None,
-                    key: None,
-                })
-            }
-        }
+        Ok(message.into())
     }
 
     // adds a control action to control_pool
@@ -3759,7 +3624,6 @@ impl<C: DataTransform, F: TopicSubscriptionFilter> fmt::Debug for Behaviour<C, F
             .field("config", &self.config)
             .field("events", &self.events.len())
             .field("control_pool", &self.control_pool)
-            .field("publish_config", &self.publish_config)
             .field("topic_peers", &self.topic_peers)
             .field("peer_topics", &self.peer_topics)
             .field("mesh", &self.mesh)
