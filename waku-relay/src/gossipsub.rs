@@ -179,7 +179,6 @@ mod time_cache;
 mod topic;
 mod transform;
 mod types;
-mod validation;
 
 pub type IdentTopic = Topic<topic::IdentityHash>;
 pub type Sha256Topic = Topic<topic::Sha256Hash>;
