@@ -31,7 +31,7 @@ use futures::StreamExt;
 use futures_ticker::Ticker;
 use instant::Instant;
 use libp2p::core::{multiaddr::Protocol::Ip4, multiaddr::Protocol::Ip6, Endpoint, Multiaddr};
-use libp2p::identity::{Keypair, PeerId};
+use libp2p::identity::PeerId;
 use libp2p::swarm::{
     behaviour::{AddressChange, ConnectionClosed, ConnectionEstablished, FromSwarm},
     dial_opts::DialOpts,
@@ -44,13 +44,17 @@ use prost::Message as _;
 use rand::{seq::SliceRandom, thread_rng};
 
 use crate::gossipsub::backoff::BackoffStorage;
-use crate::gossipsub::config::{Config, ValidationMode};
+use crate::gossipsub::config::{Config, MessageAuthenticity, ValidationMode};
+use crate::gossipsub::error::{PublishError, SubscriptionError};
+use crate::gossipsub::event::Event;
 use crate::gossipsub::gossip_promises::GossipPromises;
 use crate::gossipsub::handler::{Handler, HandlerEvent, HandlerIn};
 use crate::gossipsub::mcache::{CachedMessage, MessageCache};
-use crate::gossipsub::message_id::MessageId;
+use crate::gossipsub::message_id::{FastMessageId, MessageId};
 use crate::gossipsub::metrics::{Churn, Config as MetricsConfig, Inclusion, Metrics, Penalty};
-use crate::gossipsub::peer_score::{PeerScore, PeerScoreParams, PeerScoreThresholds, RejectReason};
+use crate::gossipsub::peer_score::{
+    PeerScore, PeerScoreParams, PeerScoreThresholds, RejectReason, TopicScoreParams,
+};
 use crate::gossipsub::protocol::ProtocolUpgrade;
 use crate::gossipsub::rpc::{ControlMessageProto, MessageProto, RpcProto};
 use crate::gossipsub::seq_no::{
@@ -66,87 +70,9 @@ use crate::gossipsub::time_cache::{DuplicateCache, TimeCache};
 use crate::gossipsub::topic::{Hasher, Topic, TopicHash};
 use crate::gossipsub::transform::{DataTransform, IdentityTransform};
 use crate::gossipsub::types::{
-    ControlAction, Message, MessageAcceptance, PeerInfo, RawMessage, Subscription,
-    SubscriptionAction,
+    ControlAction, Message, MessageAcceptance, PeerConnections, PeerInfo, PeerKind, RawMessage,
+    Rpc, Subscription, SubscriptionAction,
 };
-use crate::gossipsub::types::{PeerConnections, PeerKind, Rpc};
-use crate::gossipsub::{FastMessageId, TopicScoreParams};
-use crate::gossipsub::{PublishError, SubscriptionError};
-
-/// Determines if published messages should be signed or not.
-///
-/// Without signing, a number of privacy preserving modes can be selected.
-///
-/// NOTE: The default validation settings are to require signatures. The [`ValidationMode`]
-/// should be updated in the [`Config`] to allow for unsigned messages.
-#[derive(Clone)]
-pub enum MessageAuthenticity {
-    /// Message signing is enabled. The author will be the owner of the key and the sequence number
-    /// will be linearly increasing.
-    Signed(Keypair),
-    /// Message signing is disabled.
-    ///
-    /// The specified [`PeerId`] will be used as the author of all published messages. The sequence
-    /// number will be randomized.
-    Author(PeerId),
-    /// Message signing is disabled.
-    ///
-    /// A random [`PeerId`] will be used when publishing each message. The sequence number will be
-    /// randomized.
-    RandomAuthor,
-    /// Message signing is disabled.
-    ///
-    /// The author of the message and the sequence numbers are excluded from the message.
-    ///
-    /// NOTE: Excluding these fields may make these messages invalid by other nodes who
-    /// enforce validation of these fields. See [`ValidationMode`] in the [`Config`]
-    /// for how to customise this for rust-libp2p gossipsub.  A custom `message_id`
-    /// function will need to be set to prevent all messages from a peer being filtered
-    /// as duplicates.
-    Anonymous,
-}
-
-impl MessageAuthenticity {
-    /// Returns true if signing is enabled.
-    pub fn is_signing(&self) -> bool {
-        matches!(self, MessageAuthenticity::Signed(_))
-    }
-
-    pub fn is_anonymous(&self) -> bool {
-        matches!(self, MessageAuthenticity::Anonymous)
-    }
-}
-
-/// Event that can be emitted by the gossipsub behaviour.
-#[derive(Debug)]
-pub enum Event {
-    /// A message has been received.
-    Message {
-        /// The peer that forwarded us this message.
-        propagation_source: PeerId,
-        /// The [`MessageId`] of the message. This should be referenced by the application when
-        /// validating a message (if required).
-        message_id: MessageId,
-        /// The decompressed message itself.
-        message: Message,
-    },
-    /// A remote subscribed to a topic.
-    Subscribed {
-        /// Remote that has subscribed.
-        peer_id: PeerId,
-        /// The topic it has subscribed to.
-        topic: TopicHash,
-    },
-    /// A remote unsubscribed from a topic.
-    Unsubscribed {
-        /// Remote that has unsubscribed.
-        peer_id: PeerId,
-        /// The topic it has subscribed from.
-        topic: TopicHash,
-    },
-    /// A peer that does not support gossipsub has connected.
-    GossipsubNotSupported { peer_id: PeerId },
-}
 
 fn get_ip_addr(addr: &Multiaddr) -> Option<IpAddr> {
     addr.iter().find_map(|p| match p {

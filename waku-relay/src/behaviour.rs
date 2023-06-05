@@ -8,8 +8,7 @@ use waku_core::pubsub_topic::PubsubTopic;
 
 use crate::error::{PublishError, SubscriptionError};
 use crate::event::Event;
-use crate::gossipsub::{IdentTopic, MessageAuthenticity, MessageId, ValidationMode};
-use crate::gossipsub;
+use crate::gossipsub::{self, IdentTopic, MessageAuthenticity, MessageId, ValidationMode};
 use crate::message_id::deterministic_message_id_fn;
 use crate::proto::MAX_WAKU_RELAY_MESSAGE_SIZE;
 
