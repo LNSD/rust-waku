@@ -23,8 +23,55 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
+use libp2p::identity::Keypair;
+use libp2p::PeerId;
+
 use crate::gossipsub::message_id::{default_message_id_fn, FastMessageId, MessageId};
 use crate::gossipsub::types::{Message, RawMessage};
+
+/// Determines if published messages should be signed or not.
+///
+/// Without signing, a number of privacy preserving modes can be selected.
+///
+/// NOTE: The default validation settings are to require signatures. The [`ValidationMode`]
+/// should be updated in the [`Config`] to allow for unsigned messages.
+#[derive(Clone)]
+pub enum MessageAuthenticity {
+    /// Message signing is enabled. The author will be the owner of the key and the sequence number
+    /// will be linearly increasing.
+    Signed(Keypair),
+    /// Message signing is disabled.
+    ///
+    /// The specified [`PeerId`] will be used as the author of all published messages. The sequence
+    /// number will be randomized.
+    Author(PeerId),
+    /// Message signing is disabled.
+    ///
+    /// A random [`PeerId`] will be used when publishing each message. The sequence number will be
+    /// randomized.
+    RandomAuthor,
+    /// Message signing is disabled.
+    ///
+    /// The author of the message and the sequence numbers are excluded from the message.
+    ///
+    /// NOTE: Excluding these fields may make these messages invalid by other nodes who
+    /// enforce validation of these fields. See [`ValidationMode`] in the [`Config`]
+    /// for how to customise this for rust-libp2p gossipsub.  A custom `message_id`
+    /// function will need to be set to prevent all messages from a peer being filtered
+    /// as duplicates.
+    Anonymous,
+}
+
+impl MessageAuthenticity {
+    /// Returns true if signing is enabled.
+    pub fn is_signing(&self) -> bool {
+        matches!(self, MessageAuthenticity::Signed(_))
+    }
+
+    pub fn is_anonymous(&self) -> bool {
+        matches!(self, MessageAuthenticity::Anonymous)
+    }
+}
 
 /// The types of message validation that can be employed by gossipsub.
 #[derive(Debug, Clone)]

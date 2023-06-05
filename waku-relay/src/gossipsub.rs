@@ -96,7 +96,7 @@
 //! use libp2p::core::Multiaddr;
 //! use libp2p::core::transport::MemoryTransport;
 //! use libp2p::core::transport::Transport;
-//! use waku_relay::gossipsub::MessageAuthenticity;
+//! use waku_relay::gossipsub::config::MessageAuthenticity;
 //!
 //! let local_key = Keypair::generate_ed25519();
 //! let local_peer_id = libp2p::identity::PeerId::from(local_key.public());
@@ -141,9 +141,11 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-pub use self::behaviour::{Behaviour, Event, MessageAuthenticity};
+pub use self::behaviour::Behaviour;
+pub use self::config::MessageAuthenticity;
 pub use self::config::{Config, ConfigBuilder, ValidationMode, Version};
 pub use self::error::{PublishError, SubscriptionError};
+pub use self::event::Event;
 pub use self::message_id::{FastMessageId, MessageId};
 pub use self::metrics::Config as MetricsConfig;
 pub use self::peer_score::{
@@ -164,6 +166,7 @@ mod behaviour;
 mod codec;
 mod config;
 mod error;
+mod event;
 mod gossip_promises;
 mod handler;
 mod mcache;
