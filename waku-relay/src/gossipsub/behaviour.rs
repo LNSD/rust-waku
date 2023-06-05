@@ -57,7 +57,9 @@ use crate::gossipsub::seq_no::{
     LinearSequenceNumber, MessageSeqNumberGenerator, RandomSequenceNumber,
 };
 use crate::gossipsub::signing::{
-    AuthorOnlySigner, Libp2pSigner, MessageSigner, NoopSigner, RandomAuthorSigner,
+    AnonymousMessageValidator, AuthorOnlySigner, Libp2pSigner, MessageSigner, MessageValidator,
+    NoopMessageValidator, NoopSigner, PermissiveMessageValidator, RandomAuthorSigner,
+    StrictMessageValidator, ValidationError,
 };
 use crate::gossipsub::subscription_filter::{AllowAllSubscriptionFilter, TopicSubscriptionFilter};
 use crate::gossipsub::time_cache::{DuplicateCache, TimeCache};
@@ -68,10 +70,6 @@ use crate::gossipsub::types::{
     SubscriptionAction,
 };
 use crate::gossipsub::types::{PeerConnections, PeerKind, Rpc};
-use crate::gossipsub::validation::{
-    AnonymousMessageValidator, MessageValidator, NoopMessageValidator, PermissiveMessageValidator,
-    StrictMessageValidator, ValidationError,
-};
 use crate::gossipsub::{FastMessageId, TopicScoreParams};
 use crate::gossipsub::{PublishError, SubscriptionError};
 

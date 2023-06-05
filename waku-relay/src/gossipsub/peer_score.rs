@@ -30,14 +30,14 @@ use libp2p::identity::PeerId;
 use log::{debug, trace, warn};
 
 pub use params::{
-    PeerScoreParams, PeerScoreThresholds, score_parameter_decay, score_parameter_decay_with_base,
+    score_parameter_decay, score_parameter_decay_with_base, PeerScoreParams, PeerScoreThresholds,
     TopicScoreParams,
 };
 
-use crate::gossipsub::{MessageId, TopicHash};
 use crate::gossipsub::metrics::{Metrics, Penalty};
+use crate::gossipsub::signing::ValidationError;
 use crate::gossipsub::time_cache::TimeCache;
-use crate::gossipsub::validation::ValidationError;
+use crate::gossipsub::{MessageId, TopicHash};
 
 mod params;
 

@@ -271,7 +271,7 @@ mod tests {
     use hex_literal::hex;
     use libp2p::identity::Keypair;
 
-    use crate::gossipsub::signing::generate_message_signature;
+    use crate::gossipsub::signing::signer::generate_message_signature;
 
     use super::*;
 
