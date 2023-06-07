@@ -18,7 +18,9 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use std::convert::Infallible;
 use std::fmt;
+use std::str::FromStr;
 
 use base64::prelude::*;
 use prometheus_client::encoding::EncodeLabelSet;
@@ -72,8 +74,8 @@ pub struct TopicHash {
 }
 
 impl TopicHash {
-    pub fn from_raw<T: Into<String>>(hash: T) -> TopicHash {
-        TopicHash { hash: hash.into() }
+    pub fn from_raw<T: Into<String>>(raw: T) -> Self {
+        Self { hash: raw.into() }
     }
 
     pub fn into_string(self) -> String {
@@ -82,6 +84,26 @@ impl TopicHash {
 
     pub fn as_str(&self) -> &str {
         &self.hash
+    }
+}
+
+impl<T: Into<String>> From<T> for TopicHash {
+    fn from(hash: T) -> Self {
+        Self::from_raw(hash)
+    }
+}
+
+impl FromStr for TopicHash {
+    type Err = Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self::from_raw(s))
+    }
+}
+
+impl AsRef<str> for TopicHash {
+    fn as_ref(&self) -> &str {
+        self.as_str()
     }
 }
 

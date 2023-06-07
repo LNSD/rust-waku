@@ -28,7 +28,7 @@ use prost::Message as _;
 
 use crate::gossipsub::mcache::CachedMessage;
 use crate::gossipsub::message_id::MessageId;
-use crate::gossipsub::rpc::MessageProto;
+use crate::gossipsub::rpc::{MessageProto, MessageRpc};
 use crate::gossipsub::topic::TopicHash;
 
 /// Validation kinds from the application for received messages.
@@ -98,6 +98,19 @@ impl RawMessage {
     pub fn raw_protobuf_len(&self) -> usize {
         let message: MessageProto = self.clone().into();
         message.encoded_len()
+    }
+}
+
+impl From<MessageRpc> for RawMessage {
+    fn from(rpc: MessageRpc) -> Self {
+        Self {
+            source: rpc.source(),
+            data: rpc.data().to_vec(),
+            sequence_number: rpc.sequence_number(),
+            topic: rpc.topic().into(),
+            signature: rpc.signature().map(|s| s.to_vec()),
+            key: rpc.key().map(|s| s.to_vec()),
+        }
     }
 }
 

@@ -96,7 +96,7 @@
 //! use libp2p::core::Multiaddr;
 //! use libp2p::core::transport::MemoryTransport;
 //! use libp2p::core::transport::Transport;
-//! use waku_relay::gossipsub::config::MessageAuthenticity;
+//! use waku_relay::gossipsub::MessageAuthenticity;
 //!
 //! let local_key = Keypair::generate_ed25519();
 //! let local_peer_id = libp2p::identity::PeerId::from(local_key.public());

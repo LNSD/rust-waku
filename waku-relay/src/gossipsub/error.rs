@@ -91,3 +91,39 @@ impl From<io::Error> for PublishError {
         PublishError::TransformFailed(error)
     }
 }
+
+#[derive(Debug, Clone, Copy, strum_macros::Display, thiserror::Error)]
+pub enum MessageValidationError {
+    /// Empty message topic.
+    InvalidTopic,
+    /// The message source was invalid (invalid peer id).
+    InvalidPeerId,
+    /// The message source was not present.
+    MissingMessageSource,
+    /// The sequence number was the incorrect size
+    InvalidSequenceNumber,
+    /// The message sequence number was not present
+    MissingSequenceNumber,
+    /// The message has an invalid signature.
+    InvalidSignature,
+    /// The message signature was not present.
+    MissingSignature,
+    /// The message has an invalid key.
+    InvalidKey,
+    /// The message public key was not present.
+    MissingPublicKey,
+    /// Signature existed when validation has been sent to
+    /// [`MessageAuthenticity::Anonymous`].
+    SignaturePresent,
+    /// Key existed when validation has been sent to
+    /// [`MessageAuthenticity::Anonymous`].
+    KeyPresent,
+    /// Sequence number existed when validation has been sent to
+    /// [`MessageAuthenticity::Anonymous`].
+    SequenceNumberPresent,
+    /// Message source existed when validation has been sent to
+    /// [`MessageAuthenticity::Anonymous`].
+    MessageSourcePresent,
+    /// The data transformation failed.
+    TransformFailed,
+}

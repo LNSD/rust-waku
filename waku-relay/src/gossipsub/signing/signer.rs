@@ -1,13 +1,12 @@
-use bytes::Bytes;
 use libp2p::identity::{Keypair, PeerId, SigningError};
 use prost::Message as _;
 
-use crate::gossipsub::rpc::MessageProto;
+use crate::gossipsub::rpc::{MessageProto, MessageRpc};
 
 pub trait MessageSigner {
     fn author(&self) -> Option<&PeerId>;
 
-    fn sign(&self, message: &mut MessageProto) -> Result<(), SigningError>;
+    fn sign(&self, message: &mut MessageRpc) -> Result<(), SigningError>;
 }
 
 /// A [`MessageSigner`] implementation that does not sign messages.
@@ -24,7 +23,7 @@ impl MessageSigner for NoopSigner {
         None
     }
 
-    fn sign(&self, _message: &mut MessageProto) -> Result<(), SigningError> {
+    fn sign(&self, _message: &mut MessageRpc) -> Result<(), SigningError> {
         Ok(())
     }
 }
@@ -89,14 +88,13 @@ impl MessageSigner for Libp2pSigner {
         Some(&self.author)
     }
 
-    fn sign(&self, message: &mut MessageProto) -> Result<(), SigningError> {
+    fn sign(&self, message: &mut MessageRpc) -> Result<(), SigningError> {
         // Libp2p's pubsub message signature generation requires the `from` field to be set.
-        let author = self.author.clone().to_bytes();
-        message.from = Some(Bytes::from(author));
+        message.set_source(Some(self.author));
 
-        let signature = generate_message_signature(message, &self.keypair)?;
-        message.signature = Some(Bytes::from(signature));
-        message.key = self.inline_key.as_deref().map(Bytes::copy_from_slice);
+        let signature = generate_message_signature(message.as_proto(), &self.keypair)?;
+        message.set_signature(Some(signature));
+        message.set_key(self.inline_key.clone());
 
         Ok(())
     }
@@ -118,9 +116,8 @@ impl MessageSigner for AuthorOnlySigner {
         Some(&self.author)
     }
 
-    fn sign(&self, message: &mut MessageProto) -> Result<(), SigningError> {
-        let author = self.author.clone().to_bytes();
-        message.from = Some(Bytes::from(author));
+    fn sign(&self, message: &mut MessageRpc) -> Result<(), SigningError> {
+        message.set_source(Some(self.author));
         Ok(())
     }
 }
@@ -139,9 +136,8 @@ impl MessageSigner for RandomAuthorSigner {
         None
     }
 
-    fn sign(&self, message: &mut MessageProto) -> Result<(), SigningError> {
-        let author = PeerId::random().to_bytes();
-        message.from = Some(Bytes::from(author));
+    fn sign(&self, message: &mut MessageRpc) -> Result<(), SigningError> {
+        message.set_source(Some(PeerId::random()));
         Ok(())
     }
 }
@@ -149,6 +145,7 @@ impl MessageSigner for RandomAuthorSigner {
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
+    use bytes::Bytes;
 
     use crate::gossipsub::signing::validator::verify_message_signature;
 
@@ -158,15 +155,12 @@ mod tests {
         Keypair::generate_secp256k1()
     }
 
-    fn test_message() -> MessageProto {
-        MessageProto {
-            from: None,
-            data: Some(Bytes::from("test-message")),
-            seqno: Some(Bytes::copy_from_slice(&42_u64.to_be_bytes())),
-            topic: "test-topic".to_string(),
-            signature: None,
-            key: None,
-        }
+    fn test_message() -> MessageRpc {
+        MessageRpc::new_with_sequence_number(
+            "test-topic".to_string(),
+            b"test-message".to_vec(),
+            Some(42),
+        )
     }
 
     #[test]
@@ -176,13 +170,14 @@ mod tests {
         let message = test_message();
 
         //// When
-        let signature = generate_message_signature(&message, &keypair).expect("signing failed");
+        let signature =
+            generate_message_signature(message.as_proto(), &keypair).expect("signing failed");
 
         //// Then
         assert!(verify_message_signature(
-            &message,
+            message.as_proto(),
             &Bytes::from(signature),
-            keypair.public()
+            &keypair.public()
         ));
     }
 
@@ -205,18 +200,17 @@ mod tests {
             signer.sign(&mut message).expect("signing failed");
 
             //// Then
-            assert_matches!(&message.from, Some(from) => {
-                let from_peer_id = PeerId::from_bytes(&from[..]).expect("invalid peer id");
+            assert_matches!(message.source(), Some(from_peer_id) => {
                 assert_eq!(from_peer_id, author);
             });
-            assert_matches!(&message.signature, Some(signature) => {
-                assert!(verify_message_signature(&message, signature, keypair.public()));
+            assert_matches!(message.signature(), Some(signature) => {
+                assert!(verify_message_signature(message.as_proto(), signature, &keypair.public()));
             });
-            assert!(message.key.is_none()); // Already inlined in `from` field
+            assert!(message.key().is_none()); // Already inlined in `from` field
 
             // Validate with strict message validator
             let validator = StrictMessageValidator::new();
-            validator.validate(&message).expect("validation failed");
+            assert_matches!(validator.validate(&message), Ok(()));
         }
     }
 
@@ -239,16 +233,15 @@ mod tests {
             signer.sign(&mut message).expect("signing failed");
 
             //// Then
-            assert_matches!(&message.from, Some(from) => {
-                let from_peer_id = PeerId::from_bytes(&from[..]).expect("invalid peer id");
+            assert_matches!(message.source(), Some(from_peer_id) => {
                 assert_eq!(from_peer_id, author);
             });
-            assert!(message.signature.is_none());
-            assert!(message.key.is_none());
+            assert!(message.signature().is_none());
+            assert!(message.key().is_none());
 
             // Validate with permissive validator
             let validator = PermissiveMessageValidator::new();
-            assert!(validator.validate(&message).is_ok());
+            assert_matches!(validator.validate(&message), Ok(()));
         }
     }
 
@@ -268,13 +261,13 @@ mod tests {
             signer.sign(&mut message).expect("signing failed");
 
             //// Then
-            assert!(message.from.is_some());
-            assert!(message.signature.is_none());
-            assert!(message.key.is_none());
+            assert!(message.source().is_some());
+            assert!(message.signature().is_none());
+            assert!(message.key().is_none());
 
             // Validate with permissive validator
             let validator = PermissiveMessageValidator::new();
-            assert!(validator.validate(&message).is_ok());
+            assert_matches!(validator.validate(&message), Ok(()));
         }
     }
 
@@ -294,13 +287,13 @@ mod tests {
             signer.sign(&mut message).expect("signing failed");
 
             //// Then
-            assert!(message.from.is_none());
-            assert!(message.signature.is_none());
-            assert!(message.key.is_none());
+            assert!(message.source().is_none());
+            assert!(message.signature().is_none());
+            assert!(message.key().is_none());
 
             // Validate with anonymous validator
             let validator = PermissiveMessageValidator::new();
-            assert!(validator.validate(&message).is_ok());
+            assert_matches!(validator.validate(&message), Ok(()));
         }
     }
 }
