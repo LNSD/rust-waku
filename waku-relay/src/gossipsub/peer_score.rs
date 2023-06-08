@@ -34,8 +34,8 @@ pub use params::{
     TopicScoreParams,
 };
 
+use crate::gossipsub::error::MessageValidationError as ValidationError;
 use crate::gossipsub::metrics::{Metrics, Penalty};
-use crate::gossipsub::signing::ValidationError;
 use crate::gossipsub::time_cache::TimeCache;
 use crate::gossipsub::{MessageId, TopicHash};
 

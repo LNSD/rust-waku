@@ -1,93 +1,32 @@
-use bytes::Bytes;
-use libp2p::identity::{PeerId, PublicKey};
+use libp2p::identity::PublicKey;
 use log::{debug, warn};
 use prost::Message as _;
 
-use crate::gossipsub::rpc::MessageProto;
+use crate::gossipsub::error::MessageValidationError;
+use crate::gossipsub::rpc::{MessageProto, MessageRpc};
 
 pub(crate) const SIGNING_PREFIX: &[u8] = b"libp2p-pubsub:";
 
-#[derive(Debug, Clone, Copy, thiserror::Error)]
-pub enum ValidationError {
-    /// The message has an invalid signature,
-    InvalidSignature,
-    /// The sequence number was empty, expected a value.
-    EmptySequenceNumber,
-    /// The sequence number was the incorrect size
-    InvalidSequenceNumber,
-    /// The PeerId was invalid
-    InvalidPeerId,
-    /// Signature existed when validation has been sent to
-    /// [`crate::behaviour::MessageAuthenticity::Anonymous`].
-    SignaturePresent,
-    /// Sequence number existed when validation has been sent to
-    /// [`crate::behaviour::MessageAuthenticity::Anonymous`].
-    SequenceNumberPresent,
-    /// Message source existed when validation has been sent to
-    /// [`crate::behaviour::MessageAuthenticity::Anonymous`].
-    MessageSourcePresent,
-    /// The data transformation failed.
-    TransformFailed,
-}
-
-impl std::fmt::Display for ValidationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-
 pub trait MessageValidator {
-    fn validate(&self, message: &MessageProto) -> Result<(), ValidationError>;
+    fn validate(&self, message: &MessageRpc) -> Result<(), MessageValidationError>;
 }
 
-/// Verifies a gossipsub message. This returns either a success or failure. All errors
-/// are logged, which prevents error handling in the codec and handler. We simply drop invalid
-/// messages and log warnings, rather than propagating errors through the codec.
-// TODO: Return a proper error enum instead of logging the reason (use thiserror)
-fn verify_signature(message: &MessageProto) -> bool {
-    let signature = match message.signature.as_ref() {
-        Some(v) => v,
-        None => {
-            debug!("Signature verification failed: No signature provided");
-            return false;
-        }
-    };
-    let from = match message.from.as_ref() {
-        Some(v) => v,
-        None => {
-            debug!("Signature verification failed: No source id given");
-            return false;
-        }
-    };
-
-    let source = match PeerId::from_bytes(from) {
-        Ok(v) => v,
-        Err(_) => {
-            debug!("Signature verification failed: Invalid Peer Id");
-            return false;
-        }
-    };
-
-    // If there is a key value in the protobuf, use that key otherwise the key must be
-    // obtained from the inlined source peer_id.
-    let public_key = match message.key.as_deref().map(PublicKey::try_decode_protobuf) {
-        Some(Ok(key)) => key,
-        _ => match PublicKey::try_decode_protobuf(&source.to_bytes()[2..]) {
-            Ok(v) => v,
-            Err(_) => {
-                warn!("Signature verification failed: No valid public key supplied");
-                return false;
-            }
-        },
-    };
-
-    // The key must match the peer_id
-    if source != public_key.to_peer_id() {
-        warn!("Signature verification failed: Public key doesn't match source peer id");
-        return false;
+/// Extract the public key from a message.
+///
+/// If the key field is not present, the source field is used.
+fn extract_key(message: &MessageRpc) -> Result<PublicKey, MessageValidationError> {
+    // If the key field os present, use it
+    if let Some(key) = message.key() {
+        return PublicKey::try_decode_protobuf(key).map_err(|_| MessageValidationError::InvalidKey);
     }
 
-    verify_message_signature(message, signature, public_key)
+    // We assume that the source field has been validated previously
+    let source = message
+        .as_proto()
+        .from
+        .as_deref()
+        .ok_or(MessageValidationError::MissingMessageSource)?;
+    PublicKey::try_decode_protobuf(&source[2..]).map_err(|_| MessageValidationError::InvalidPeerId)
 }
 
 /// Verify the signature of a message.
@@ -95,8 +34,8 @@ fn verify_signature(message: &MessageProto) -> bool {
 /// The signature is calculated over the bytes "libp2p-pubsub:<protobuf-message>".
 pub fn verify_message_signature(
     message: &MessageProto,
-    signature: &Bytes,
-    public_key: PublicKey,
+    signature: &[u8],
+    public_key: &PublicKey,
 ) -> bool {
     let mut msg = message.clone();
     msg.signature = None;
@@ -121,7 +60,7 @@ impl NoopMessageValidator {
 }
 
 impl MessageValidator for NoopMessageValidator {
-    fn validate(&self, _: &MessageProto) -> Result<(), ValidationError> {
+    fn validate(&self, _message: &MessageRpc) -> Result<(), MessageValidationError> {
         Ok(())
     }
 }
@@ -137,16 +76,19 @@ impl AnonymousMessageValidator {
 }
 
 impl MessageValidator for AnonymousMessageValidator {
-    fn validate(&self, message: &MessageProto) -> Result<(), ValidationError> {
-        if message.signature.is_some() {
+    fn validate(&self, message: &MessageRpc) -> Result<(), MessageValidationError> {
+        if message.signature().is_some() {
             warn!("Signature field was non-empty and anonymous validation mode is set");
-            return Err(ValidationError::SignaturePresent);
-        } else if message.seqno.is_some() {
+            return Err(MessageValidationError::SignaturePresent);
+        } else if message.sequence_number().is_some() {
             warn!("Sequence number was non-empty and anonymous validation mode is set");
-            return Err(ValidationError::SequenceNumberPresent);
-        } else if message.from.is_some() {
+            return Err(MessageValidationError::SequenceNumberPresent);
+        } else if message.source().is_some() {
             warn!("Message source was non-empty and anonymous validation mode is set");
-            return Err(ValidationError::MessageSourcePresent);
+            return Err(MessageValidationError::MessageSourcePresent);
+        } else if message.key().is_some() {
+            warn!("Message key was non-empty and anonymous validation mode is set");
+            return Err(MessageValidationError::KeyPresent);
         }
 
         Ok(())
@@ -164,38 +106,26 @@ impl PermissiveMessageValidator {
 }
 
 impl MessageValidator for PermissiveMessageValidator {
-    fn validate(&self, message: &MessageProto) -> Result<(), ValidationError> {
-        // ensure the sequence number is a u64
-        if let Some(seq_no) = &message.seqno {
-            if seq_no.is_empty() {
-                // sequence number was present but empty
-                debug!("Sequence number present but empty");
-                return Err(ValidationError::EmptySequenceNumber);
+    fn validate(&self, message: &MessageRpc) -> Result<(), MessageValidationError> {
+        // verify message signature, if present
+        if let Some(signature) = message.signature() {
+            let public_key = match extract_key(message) {
+                Ok(value) => value,
+                Err(_) => return Err(MessageValidationError::MissingPublicKey),
+            };
+
+            // The key must match the peer_id
+            if let Some(src) = message.source() {
+                if src != public_key.to_peer_id() {
+                    warn!("Signature verification failed: Public key doesn't match source peer id");
+                    return Err(MessageValidationError::InvalidKey);
+                }
             }
 
-            if seq_no.len() != 8 {
-                debug!(
-                    "Invalid sequence number length for received message. SeqNo: {:?} Size: {}",
-                    seq_no,
-                    seq_no.len()
-                );
-                return Err(ValidationError::InvalidSequenceNumber);
+            if !verify_message_signature(message.as_proto(), signature, &public_key) {
+                warn!("Invalid signature for received message");
+                return Err(MessageValidationError::InvalidSignature);
             }
-        }
-
-        // Verify the message source
-        if let Some(peer_bytes) = &message.from {
-            if !peer_bytes.is_empty() && PeerId::from_bytes(peer_bytes).is_err() {
-                // invalid peer id, add to invalid messages
-                debug!("Message source has an invalid PeerId");
-                return Err(ValidationError::InvalidPeerId);
-            }
-        }
-
-        // verify message signatures
-        if message.signature.is_some() && !verify_signature(message) {
-            warn!("Invalid signature for received message");
-            return Err(ValidationError::InvalidSignature);
         }
 
         Ok(())
@@ -213,52 +143,41 @@ impl StrictMessageValidator {
 }
 
 impl MessageValidator for StrictMessageValidator {
-    fn validate(&self, message: &MessageProto) -> Result<(), ValidationError> {
-        // ensure the sequence number is a u64
-        match &message.seqno {
-            None => {
-                debug!("Sequence number not present, but expected");
-                return Err(ValidationError::EmptySequenceNumber);
-            }
-            Some(seq_no) if seq_no.is_empty() => {
-                debug!("Sequence number present, but empty");
-                return Err(ValidationError::EmptySequenceNumber);
-            }
-            Some(seq_no) if seq_no.len() != 8 => {
-                debug!(
-                    "Invalid sequence number length for received message. SeqNo: {:?} Size: {}",
-                    seq_no,
-                    seq_no.len()
-                );
-                return Err(ValidationError::InvalidSequenceNumber);
-            }
-            _ => {} // Valid sequence number length
+    fn validate(&self, message: &MessageRpc) -> Result<(), MessageValidationError> {
+        // message sequence number must be present
+        if message.sequence_number().is_none() {
+            debug!("Sequence number not present, but expected");
+            return Err(MessageValidationError::MissingSequenceNumber);
+        }
+
+        // message source must be present
+        if message.source().is_none() {
+            debug!("Message source not present, but expected");
+            return Err(MessageValidationError::InvalidPeerId);
+        }
+
+        // message signature must be present
+        if message.signature().is_none() {
+            debug!("Message signature not present, but expected");
+            return Err(MessageValidationError::MissingSignature);
+        }
+
+        let public_key = match extract_key(message) {
+            Ok(value) => value,
+            Err(_) => return Err(MessageValidationError::MissingPublicKey),
         };
 
-        // Verify the message source
-        match &message.from {
-            Some(bytes) if bytes.is_empty() => {
-                debug!("Message source present, but empty");
-                return Err(ValidationError::InvalidPeerId);
-            }
-            Some(bytes) if !bytes.is_empty() => {
-                if PeerId::from_bytes(bytes).is_err() {
-                    // invalid peer id, add to invalid messages
-                    debug!("Message source has an invalid PeerId");
-                    return Err(ValidationError::InvalidPeerId);
-                }
-            }
-            None => {
-                debug!("Message source not present, but expected");
-                return Err(ValidationError::InvalidPeerId);
-            }
-            _ => unreachable!(),
+        // The key must match the peer_id
+        if message.source().unwrap() != public_key.to_peer_id() {
+            warn!("Signature verification failed: Public key doesn't match source peer id");
+            return Err(MessageValidationError::InvalidKey);
         }
 
         // verify message signatures
-        if !verify_signature(message) {
+        let signature = message.signature().unwrap();
+        if !verify_message_signature(message.as_proto(), signature, &public_key) {
             warn!("Invalid signature for received message");
-            return Err(ValidationError::InvalidSignature);
+            return Err(MessageValidationError::InvalidSignature);
         }
 
         Ok(())
@@ -268,8 +187,9 @@ impl MessageValidator for StrictMessageValidator {
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
+    use bytes::Bytes;
     use hex_literal::hex;
-    use libp2p::identity::Keypair;
+    use libp2p::identity::{Keypair, PeerId};
 
     use crate::gossipsub::signing::signer::generate_message_signature;
 
@@ -281,29 +201,28 @@ mod tests {
 
     fn new_test_message(
         from: Option<PeerId>,
-        seqno: Option<u64>,
+        seq_no: Option<u64>,
         signature: Option<Bytes>,
         key: Option<Bytes>,
-    ) -> MessageProto {
-        MessageProto {
-            data: Some(Bytes::from_static(b"test")),
-            topic: "test".to_string(),
-            from: from.map(|id| Bytes::from(id.to_bytes())),
-            seqno: seqno.map(|seq| Bytes::copy_from_slice(&seq.to_be_bytes())),
-            signature,
-            key,
-        }
+    ) -> MessageRpc {
+        let mut rpc = MessageRpc::new("test-topic", b"test-data".to_vec());
+        rpc.set_source(from);
+        rpc.set_sequence_number(seq_no);
+        rpc.set_signature(signature);
+        rpc.set_key(key);
+        rpc
     }
 
-    fn new_test_signed_message(keypair: &Keypair, seqno: Option<u64>) -> MessageProto {
+    fn new_test_signed_message(keypair: &Keypair, seq_no: Option<u64>) -> MessageRpc {
         let from = Some(keypair.public().to_peer_id());
-        let mut message = new_test_message(from, seqno, None, None);
+        let mut message = new_test_message(from, seq_no, None, None);
 
-        let sign = generate_message_signature(&message, keypair).expect("message signing failed");
+        let sign = generate_message_signature(message.as_proto(), keypair)
+            .expect("message signing failed");
         let key = keypair.public().encode_protobuf();
 
-        message.signature = Some(Bytes::from(sign));
-        message.key = Some(Bytes::from(key));
+        message.set_signature(Some(sign));
+        message.set_key(Some(key));
 
         message
     }
@@ -314,7 +233,7 @@ mod tests {
         #[test]
         fn test_valid_message() {
             // Given
-            let message = MessageProto::default();
+            let message = MessageRpc::new("test-topic", b"test-data".to_vec());
             let validator = NoopMessageValidator::new();
 
             // When
@@ -352,7 +271,7 @@ mod tests {
             let result = validator.validate(&message);
 
             // Then
-            assert_matches!(result, Err(ValidationError::SignaturePresent));
+            assert_matches!(result, Err(MessageValidationError::SignaturePresent));
         }
 
         #[test]
@@ -365,7 +284,7 @@ mod tests {
             let result = validator.validate(&message);
 
             // Then
-            assert_matches!(result, Err(ValidationError::SequenceNumberPresent));
+            assert_matches!(result, Err(MessageValidationError::SequenceNumberPresent));
         }
 
         #[test]
@@ -378,7 +297,7 @@ mod tests {
             let result = validator.validate(&message);
 
             // Then
-            assert_matches!(result, Err(ValidationError::MessageSourcePresent));
+            assert_matches!(result, Err(MessageValidationError::MessageSourcePresent));
         }
     }
 
@@ -418,7 +337,7 @@ mod tests {
             let keypair = Keypair::generate_ed25519();
             let message = {
                 let mut msg = new_test_signed_message(&keypair, Some(1234));
-                msg.key = None;
+                msg.set_key(Option::<Vec<u8>>::None);
                 msg
             };
             let validator = PermissiveMessageValidator::new();
@@ -436,7 +355,7 @@ mod tests {
             let keypair = test_keypair();
             let message = {
                 let mut msg = new_test_signed_message(&keypair, Some(1234));
-                msg.signature = Some(Bytes::copy_from_slice(&hex!("cafebabe")));
+                msg.set_signature(Some(hex!("cafebabe").to_vec()));
                 msg
             };
             let validator = PermissiveMessageValidator::new();
@@ -445,7 +364,7 @@ mod tests {
             let result = validator.validate(&message);
 
             // Then
-            assert_matches!(result, Err(ValidationError::InvalidSignature));
+            assert_matches!(result, Err(MessageValidationError::InvalidSignature));
         }
     }
 
@@ -463,7 +382,7 @@ mod tests {
             let result = validator.validate(&message);
 
             // Then
-            assert_matches!(result, Err(ValidationError::EmptySequenceNumber));
+            assert_matches!(result, Err(MessageValidationError::MissingSequenceNumber));
         }
 
         #[test]
@@ -473,12 +392,12 @@ mod tests {
             let message = {
                 let mut msg = new_test_message(None, Some(1234), None, None);
 
-                let sign =
-                    generate_message_signature(&msg, &keypair).expect("message signing failed");
+                let sign = generate_message_signature(msg.as_proto(), &keypair)
+                    .expect("message signing failed");
                 let key = keypair.public().encode_protobuf();
 
-                msg.signature = Some(Bytes::from(sign));
-                msg.key = Some(Bytes::from(key));
+                msg.set_signature(Some(sign));
+                msg.set_key(Some(key));
 
                 msg
             };
@@ -488,7 +407,7 @@ mod tests {
             let result = validator.validate(&message);
 
             // Then
-            assert_matches!(result, Err(ValidationError::InvalidPeerId));
+            assert_matches!(result, Err(MessageValidationError::InvalidPeerId));
         }
 
         #[test]
@@ -497,7 +416,7 @@ mod tests {
             let keypair = test_keypair();
             let message = {
                 let mut msg = new_test_signed_message(&keypair, Some(1234));
-                msg.signature = Some(Bytes::copy_from_slice(&hex!("cafebabe")));
+                msg.set_signature(Some(hex!("cafebabe").to_vec()));
                 msg
             };
             let validator = StrictMessageValidator::new();
@@ -506,7 +425,7 @@ mod tests {
             let result = validator.validate(&message);
 
             // Then
-            assert_matches!(result, Err(ValidationError::InvalidSignature));
+            assert_matches!(result, Err(MessageValidationError::InvalidSignature));
         }
 
         #[test]
@@ -515,7 +434,7 @@ mod tests {
             let keypair = test_keypair();
             let msg = {
                 let mut message = new_test_signed_message(&keypair, Some(1234));
-                message.key = None;
+                message.set_key(Option::<Vec<u8>>::None);
                 message
             };
             let validator = StrictMessageValidator::new();
@@ -534,12 +453,12 @@ mod tests {
             let message = {
                 let mut msg = new_test_message(Some(PeerId::random()), Some(1234), None, None);
 
-                let sign =
-                    generate_message_signature(&msg, &keypair).expect("message signing failed");
+                let sign = generate_message_signature(msg.as_proto(), &keypair)
+                    .expect("message signing failed");
                 let key = keypair.public().encode_protobuf();
 
-                msg.signature = Some(Bytes::from(sign));
-                msg.key = Some(Bytes::from(key));
+                msg.set_signature(Some(sign));
+                msg.set_key(Some(key));
 
                 msg
             };
@@ -549,7 +468,7 @@ mod tests {
             let result = validator.validate(&message);
 
             // Then
-            assert_matches!(result, Err(ValidationError::InvalidSignature));
+            assert_matches!(result, Err(MessageValidationError::InvalidKey));
         }
 
         #[test]

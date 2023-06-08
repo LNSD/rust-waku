@@ -26,7 +26,6 @@ use std::net::IpAddr;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use bytes::Bytes;
 use futures::StreamExt;
 use futures_ticker::Ticker;
 use instant::Instant;
@@ -45,7 +44,9 @@ use rand::{seq::SliceRandom, thread_rng};
 
 use crate::gossipsub::backoff::BackoffStorage;
 use crate::gossipsub::config::{Config, MessageAuthenticity, ValidationMode};
-use crate::gossipsub::error::{PublishError, SubscriptionError};
+use crate::gossipsub::error::{
+    MessageValidationError as ValidationError, PublishError, SubscriptionError,
+};
 use crate::gossipsub::event::Event;
 use crate::gossipsub::gossip_promises::GossipPromises;
 use crate::gossipsub::handler::{Handler, HandlerEvent, HandlerIn};
@@ -56,14 +57,14 @@ use crate::gossipsub::peer_score::{
     PeerScore, PeerScoreParams, PeerScoreThresholds, RejectReason, TopicScoreParams,
 };
 use crate::gossipsub::protocol::ProtocolUpgrade;
-use crate::gossipsub::rpc::{ControlMessageProto, MessageProto, RpcProto};
+use crate::gossipsub::rpc::{validate_message_proto, ControlMessageProto, MessageRpc, RpcProto};
 use crate::gossipsub::seq_no::{
     LinearSequenceNumber, MessageSeqNumberGenerator, RandomSequenceNumber,
 };
 use crate::gossipsub::signing::{
     AnonymousMessageValidator, AuthorOnlySigner, Libp2pSigner, MessageSigner, MessageValidator,
     NoopMessageValidator, NoopSigner, PermissiveMessageValidator, RandomAuthorSigner,
-    StrictMessageValidator, ValidationError,
+    StrictMessageValidator,
 };
 use crate::gossipsub::subscription_filter::{AllowAllSubscriptionFilter, TopicSubscriptionFilter};
 use crate::gossipsub::time_cache::{DuplicateCache, TimeCache};
@@ -662,24 +663,33 @@ where
         topic: impl Into<TopicHash>,
         data: impl Into<Vec<u8>>,
     ) -> Result<MessageId, PublishError> {
-        let data = data.into();
-        let topic = topic.into();
+        let raw_data = data.into();
+        let topic_hash = topic.into();
 
         // Transform the data before building a raw_message.
         let transformed_data = self
             .data_transform
-            .outbound_transform(&topic, data.clone())?;
+            .outbound_transform(&topic_hash, raw_data.clone())?;
 
-        let raw_message = self.build_raw_message(topic, transformed_data)?;
+        let sequence_number: Option<u64> =
+            self.message_seqno_generator.as_mut().map(|gen| gen.next());
+
+        let mut message = MessageRpc::new_with_sequence_number(
+            topic_hash.clone(),
+            transformed_data,
+            sequence_number,
+        );
+        self.message_signer.sign(&mut message)?;
 
         // calculate the message id from the un-transformed data
         let msg_id = self.config.message_id(&Message {
-            source: raw_message.source,
-            data, // the uncompressed form
-            sequence_number: raw_message.sequence_number,
-            topic: raw_message.topic.clone(),
+            source: message.source(),
+            data: raw_data,
+            sequence_number,
+            topic: topic_hash.clone(),
         });
 
+        let raw_message: RawMessage = message.into();
         let event: RpcProto = Rpc {
             subscriptions: Vec::new(),
             messages: vec![raw_message.clone()],
@@ -704,8 +714,6 @@ where
         }
 
         trace!("Publishing message: {:?}", msg_id);
-
-        let topic_hash = raw_message.topic.clone();
 
         // If we are not flood publishing forward the message to mesh peers.
         let mesh_peers_sent = !self.config.flood_publish()
@@ -1273,16 +1281,38 @@ where
         let mut invalid_messages = Vec::new();
 
         for message in rpc.publish.into_iter() {
+            if let Err(err) = validate_message_proto(&message) {
+                // If the message is invalid, add it to the invalid messages and continue
+                // processing the other messages.
+                // TODO: Review this logic. Possible validation errors here:
+                //   - InvalidTopic (empty topic)
+                //   - InvalidPeerId
+                //   - InvalidSequenceNumber (not a Big-endian encoded u64)
+                let raw_message = RawMessage {
+                    source: None,          // don't inform the application
+                    data: vec![],          // don't inform the application
+                    sequence_number: None, // don't inform the application
+                    topic: "".into(),      // don't inform the application
+                    signature: None,       // don't inform the application
+                    key: None,             // don't inform the application
+                };
+                invalid_messages.push((raw_message, err));
+
+                continue;
+            }
+
+            let message: MessageRpc = message.into();
             if let Err(err) = self.message_validator.validate(&message) {
                 // If the message is invalid, add it to the invalid messages and continue
                 // processing the other messages.
+                // TODO: Review this logic, together with invalid messages peer scoring.
                 let raw_message = RawMessage {
-                    source: None, // don't inform the application
-                    data: message.data.map(Into::into).unwrap_or_default(),
+                    topic: message.topic().into(),
+                    data: message.data().to_vec(),
+                    source: None,          // don't inform the application
                     sequence_number: None, // don't inform the application
-                    topic: TopicHash::from_raw(&message.topic),
-                    signature: None, // don't inform the application
-                    key: message.key.map(Into::into),
+                    signature: None,       // don't inform the application
+                    key: None,             // don't inform the application
                 };
                 invalid_messages.push((raw_message, err));
 
@@ -2942,48 +2972,27 @@ where
         }
 
         // forward the message to peers
-        if !recipient_peers.is_empty() {
-            let event: RpcProto = Rpc {
-                subscriptions: Vec::new(),
-                messages: vec![message.clone()],
-                control_msgs: Vec::new(),
-            }
-            .into();
-
-            let msg_bytes = event.encoded_len();
-            for peer in recipient_peers.iter() {
-                debug!("Sending message: {:?} to peer {:?}", msg_id, peer);
-                self.send_message(*peer, event.clone())?;
-                if let Some(m) = self.metrics.as_mut() {
-                    m.msg_sent(&message.topic, msg_bytes);
-                }
-            }
-            debug!("Completed forwarding message");
-            Ok(true)
-        } else {
-            Ok(false)
+        if recipient_peers.is_empty() {
+            return Ok(false);
         }
-    }
 
-    /// Constructs a [`RawMessage`] performing message signing if required.
-    pub(crate) fn build_raw_message(
-        &mut self,
-        topic: TopicHash,
-        data: Vec<u8>,
-    ) -> Result<RawMessage, PublishError> {
-        let seq_no: Option<u64> = self.message_seqno_generator.as_mut().map(|gen| gen.next());
-        let mut message = MessageProto {
-            from: None,
-            data: Some(Bytes::from(data)),
-            seqno: seq_no.map(|seq_no| Bytes::copy_from_slice(&seq_no.to_be_bytes())),
-            topic: topic.into_string(),
-            signature: None,
-            key: None,
-        };
+        let event: RpcProto = Rpc {
+            subscriptions: Vec::new(),
+            messages: vec![message.clone()],
+            control_msgs: Vec::new(),
+        }
+        .into();
 
-        self.message_signer.sign(&mut message)?;
-
-        Ok(message.into())
+        let msg_bytes = event.encoded_len();
+        for peer in recipient_peers.iter() {
+            debug!("Sending message: {:?} to peer {:?}", msg_id, peer);
+            self.send_message(*peer, event.clone())?;
+            if let Some(m) = self.metrics.as_mut() {
+                m.msg_sent(&message.topic, msg_bytes);
+            }
+        }
+        debug!("Completed forwarding message");
+        Ok(true)
     }
 
     // adds a control action to control_pool
@@ -3533,13 +3542,6 @@ where
 
         Poll::Pending
     }
-}
-
-impl<C, F> Behaviour<C, F>
-where
-    C: 'static + DataTransform + Send,
-    F: 'static + Send + TopicSubscriptionFilter,
-{
 }
 
 impl<C: DataTransform, F: TopicSubscriptionFilter> fmt::Debug for Behaviour<C, F> {
