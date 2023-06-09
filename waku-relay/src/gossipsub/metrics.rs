@@ -27,11 +27,11 @@ use prometheus_client::encoding::{EncodeLabelSet, EncodeLabelValue};
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::{Family, MetricConstructor};
 use prometheus_client::metrics::gauge::Gauge;
-use prometheus_client::metrics::histogram::{Histogram, linear_buckets};
+use prometheus_client::metrics::histogram::{linear_buckets, Histogram};
 use prometheus_client::registry::Registry;
 
-use crate::gossipsub::{MessageAcceptance, PeerScoreThresholds, TopicHash};
 use crate::gossipsub::types::PeerKind;
+use crate::gossipsub::{MessageAcceptance, PeerScoreThresholds, TopicHash};
 
 // Default value that limits for how many topics do we store metrics.
 const DEFAULT_MAX_TOPICS: usize = 300;
@@ -39,6 +39,58 @@ const DEFAULT_MAX_TOPICS: usize = 300;
 // Default value that limits how many topics for which there has never been a subscription do we
 // store metrics.
 const DEFAULT_MAX_NEVER_SUBSCRIBED_TOPICS: usize = 50;
+
+pub(crate) trait Metrics {
+    /// Register how many peers do we known are subscribed to this topic.
+    fn set_topic_peers(&mut self, topic: &TopicHash, count: usize) {}
+    /// Registers the subscription to a topic if the configured limits allow it.
+    /// Sets the registered number of peers in the mesh to 0.
+    fn joined(&mut self, topic: &TopicHash) {}
+    /// Registers the unsubscription to a topic if the topic was previously allowed.
+    /// Sets the registered number of peers in the mesh to 0.
+    fn left(&mut self, topic: &TopicHash) {}
+    /// Register the inclusion of peers in our mesh due to some reason.
+    fn peers_included(&mut self, topic: &TopicHash, reason: Inclusion, count: usize) {}
+    /// Register the removal of peers in our mesh due to some reason.
+    fn peers_removed(&mut self, topic: &TopicHash, reason: Churn, count: usize) {}
+    /// Register the current number of peers in our mesh for this topic.
+    fn set_mesh_peers(&mut self, topic: &TopicHash, count: usize) {}
+    /// Register that an invalid message was received on a specific topic.
+    fn register_invalid_message(&mut self, topic: &TopicHash) {}
+    /// Register a score penalty.
+    fn register_score_penalty(&mut self, penalty: Penalty) {}
+    /// Registers that a message was published on a specific topic.
+    fn register_published_message(&mut self, topic: &TopicHash) {}
+    /// Register sending a message over a topic.
+    fn msg_sent(&mut self, topic: &TopicHash, bytes: usize) {}
+    /// Register that a message was received (and was not a duplicate).
+    fn msg_recvd(&mut self, topic: &TopicHash) {}
+    /// Register that a message was received (could have been a duplicate).
+    fn msg_recvd_unfiltered(&mut self, topic: &TopicHash, bytes: usize) {}
+    fn register_msg_validation(&mut self, topic: &TopicHash, validation: &MessageAcceptance) {}
+    /// Register a memcache miss.
+    fn memcache_miss(&mut self) {}
+    /// Register sending an IWANT msg for this topic.
+    fn register_iwant(&mut self, topic: &TopicHash) {}
+    /// Observes a heartbeat duration.
+    fn observe_heartbeat_duration(&mut self, millis: u64) {}
+    /// Observe a score of a mesh peer.
+    fn observe_mesh_peers_score(&mut self, topic: &TopicHash, score: f64) {}
+    /// Register a new peers connection based on its protocol.
+    fn peer_protocol_connected(&mut self, kind: PeerKind) {}
+    /// Removes a peer from the counter based on its protocol when it disconnects.
+    fn peer_protocol_disconnected(&mut self, kind: PeerKind) {}
+}
+
+pub(crate) struct NoopMetrics;
+
+impl NoopMetrics {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Metrics for NoopMetrics {}
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -99,7 +151,7 @@ impl Default for Config {
 type EverSubscribed = bool;
 
 /// A collection of metrics used throughout the Gossipsub behaviour.
-pub(crate) struct Metrics {
+pub(crate) struct GossipsubMetrics {
     /* Configuration parameters */
     /// Maximum number of topics for which we store metrics. This helps keep the metrics bounded.
     max_topics: usize,
@@ -176,7 +228,7 @@ pub(crate) struct Metrics {
     topic_iwant_msgs: Family<TopicHash, Counter>,
 }
 
-impl Metrics {
+impl GossipsubMetrics {
     pub(crate) fn new(registry: &mut Registry, config: Config) -> Self {
         // Destructure the config to be sure everything is used.
         let Config {
@@ -355,20 +407,21 @@ impl Metrics {
         }
     }
 
+    /* Mesh related methods */
+}
+
+impl Metrics for GossipsubMetrics {
     /// Register how many peers do we known are subscribed to this topic.
-    pub(crate) fn set_topic_peers(&mut self, topic: &TopicHash, count: usize) {
+    fn set_topic_peers(&mut self, topic: &TopicHash, count: usize) {
         if self.register_topic(topic).is_ok() {
             self.topic_peers_count
                 .get_or_create(topic)
                 .set(count as i64);
         }
     }
-
-    /* Mesh related methods */
-
     /// Registers the subscription to a topic if the configured limits allow it.
     /// Sets the registered number of peers in the mesh to 0.
-    pub(crate) fn joined(&mut self, topic: &TopicHash) {
+    fn joined(&mut self, topic: &TopicHash) {
         if self.topic_info.contains_key(topic) || self.topic_info.len() < self.max_topics {
             self.topic_info.insert(topic.clone(), true);
             let was_subscribed = self.topic_subscription_status.get_or_create(topic).set(1);
@@ -376,10 +429,9 @@ impl Metrics {
             self.mesh_peer_counts.get_or_create(topic).set(0);
         }
     }
-
     /// Registers the unsubscription to a topic if the topic was previously allowed.
     /// Sets the registered number of peers in the mesh to 0.
-    pub(crate) fn left(&mut self, topic: &TopicHash) {
+    fn left(&mut self, topic: &TopicHash) {
         if self.topic_info.contains_key(topic) {
             // Depending on the configured topic bounds we could miss a mesh topic.
             // So, check first if the topic was previously allowed.
@@ -388,9 +440,8 @@ impl Metrics {
             self.mesh_peer_counts.get_or_create(topic).set(0);
         }
     }
-
     /// Register the inclusion of peers in our mesh due to some reason.
-    pub(crate) fn peers_included(&mut self, topic: &TopicHash, reason: Inclusion, count: usize) {
+    fn peers_included(&mut self, topic: &TopicHash, reason: Inclusion, count: usize) {
         if self.register_topic(topic).is_ok() {
             self.mesh_peer_inclusion_events
                 .get_or_create(&InclusionLabel {
@@ -400,9 +451,8 @@ impl Metrics {
                 .inc_by(count as u64);
         }
     }
-
     /// Register the removal of peers in our mesh due to some reason.
-    pub(crate) fn peers_removed(&mut self, topic: &TopicHash, reason: Churn, count: usize) {
+    fn peers_removed(&mut self, topic: &TopicHash, reason: Churn, count: usize) {
         if self.register_topic(topic).is_ok() {
             self.mesh_peer_churn_events
                 .get_or_create(&ChurnLabel {
@@ -412,38 +462,33 @@ impl Metrics {
                 .inc_by(count as u64);
         }
     }
-
     /// Register the current number of peers in our mesh for this topic.
-    pub(crate) fn set_mesh_peers(&mut self, topic: &TopicHash, count: usize) {
+    fn set_mesh_peers(&mut self, topic: &TopicHash, count: usize) {
         if self.register_topic(topic).is_ok() {
             // Due to limits, this topic could have not been allowed, so we check.
             self.mesh_peer_counts.get_or_create(topic).set(count as i64);
         }
     }
-
     /// Register that an invalid message was received on a specific topic.
-    pub(crate) fn register_invalid_message(&mut self, topic: &TopicHash) {
+    fn register_invalid_message(&mut self, topic: &TopicHash) {
         if self.register_topic(topic).is_ok() {
             self.invalid_messages.get_or_create(topic).inc();
         }
     }
-
     /// Register a score penalty.
-    pub(crate) fn register_score_penalty(&mut self, penalty: Penalty) {
+    fn register_score_penalty(&mut self, penalty: Penalty) {
         self.scoring_penalties
             .get_or_create(&PenaltyLabel { penalty })
             .inc();
     }
-
     /// Registers that a message was published on a specific topic.
-    pub(crate) fn register_published_message(&mut self, topic: &TopicHash) {
+    fn register_published_message(&mut self, topic: &TopicHash) {
         if self.register_topic(topic).is_ok() {
             self.topic_msg_published.get_or_create(topic).inc();
         }
     }
-
     /// Register sending a message over a topic.
-    pub(crate) fn msg_sent(&mut self, topic: &TopicHash, bytes: usize) {
+    fn msg_sent(&mut self, topic: &TopicHash, bytes: usize) {
         if self.register_topic(topic).is_ok() {
             self.topic_msg_sent_counts.get_or_create(topic).inc();
             self.topic_msg_sent_bytes
@@ -451,16 +496,14 @@ impl Metrics {
                 .inc_by(bytes as u64);
         }
     }
-
     /// Register that a message was received (and was not a duplicate).
-    pub(crate) fn msg_recvd(&mut self, topic: &TopicHash) {
+    fn msg_recvd(&mut self, topic: &TopicHash) {
         if self.register_topic(topic).is_ok() {
             self.topic_msg_recv_counts.get_or_create(topic).inc();
         }
     }
-
     /// Register that a message was received (could have been a duplicate).
-    pub(crate) fn msg_recvd_unfiltered(&mut self, topic: &TopicHash, bytes: usize) {
+    fn msg_recvd_unfiltered(&mut self, topic: &TopicHash, bytes: usize) {
         if self.register_topic(topic).is_ok() {
             self.topic_msg_recv_counts_unfiltered
                 .get_or_create(topic)
@@ -470,12 +513,7 @@ impl Metrics {
                 .inc_by(bytes as u64);
         }
     }
-
-    pub(crate) fn register_msg_validation(
-        &mut self,
-        topic: &TopicHash,
-        validation: &MessageAcceptance,
-    ) {
+    fn register_msg_validation(&mut self, topic: &TopicHash, validation: &MessageAcceptance) {
         if self.register_topic(topic).is_ok() {
             match validation {
                 MessageAcceptance::Accept => self.accepted_messages.get_or_create(topic).inc(),
@@ -484,40 +522,34 @@ impl Metrics {
             };
         }
     }
-
     /// Register a memcache miss.
-    pub(crate) fn memcache_miss(&mut self) {
+    fn memcache_miss(&mut self) {
         self.memcache_misses.inc();
     }
-
     /// Register sending an IWANT msg for this topic.
-    pub(crate) fn register_iwant(&mut self, topic: &TopicHash) {
+    fn register_iwant(&mut self, topic: &TopicHash) {
         if self.register_topic(topic).is_ok() {
             self.topic_iwant_msgs.get_or_create(topic).inc();
         }
     }
-
     /// Observes a heartbeat duration.
-    pub(crate) fn observe_heartbeat_duration(&mut self, millis: u64) {
+    fn observe_heartbeat_duration(&mut self, millis: u64) {
         self.heartbeat_duration.observe(millis as f64);
     }
-
     /// Observe a score of a mesh peer.
-    pub(crate) fn observe_mesh_peers_score(&mut self, topic: &TopicHash, score: f64) {
+    fn observe_mesh_peers_score(&mut self, topic: &TopicHash, score: f64) {
         if self.register_topic(topic).is_ok() {
             self.score_per_mesh.get_or_create(topic).observe(score);
         }
     }
-
     /// Register a new peers connection based on its protocol.
-    pub(crate) fn peer_protocol_connected(&mut self, kind: PeerKind) {
+    fn peer_protocol_connected(&mut self, kind: PeerKind) {
         self.peers_per_protocol
             .get_or_create(&ProtocolLabel { protocol: kind })
             .inc();
     }
-
     /// Removes a peer from the counter based on its protocol when it disconnects.
-    pub(crate) fn peer_protocol_disconnected(&mut self, kind: PeerKind) {
+    fn peer_protocol_disconnected(&mut self, kind: PeerKind) {
         let metric = self
             .peers_per_protocol
             .get_or_create(&ProtocolLabel { protocol: kind });
