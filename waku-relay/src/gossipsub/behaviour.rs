@@ -48,7 +48,6 @@ use crate::gossipsub::error::{
     MessageValidationError as ValidationError, PublishError, SubscriptionError,
 };
 use crate::gossipsub::event::Event;
-use crate::gossipsub::gossip_promises::GossipPromises;
 use crate::gossipsub::handler::{Handler, HandlerEvent, HandlerIn};
 use crate::gossipsub::mcache::{CachedMessage, MessageCache};
 use crate::gossipsub::message_id::{FastMessageId, MessageId};
@@ -56,8 +55,9 @@ use crate::gossipsub::metrics::{
     Churn, Config as MetricsConfig, GossipsubMetrics, Inclusion, Metrics, NoopMetrics, Penalty,
 };
 use crate::gossipsub::peer_score::{
-    PeerScore, PeerScoreParams, PeerScoreThresholds, RejectReason, TopicScoreParams,
+    GossipsubPeerScoreService, NoopPeerScoreService, PeerScore, PeerScoreService, RejectReason,
 };
+use crate::gossipsub::peer_score::{PeerScoreParams, PeerScoreThresholds, TopicScoreParams};
 use crate::gossipsub::protocol::ProtocolUpgrade;
 use crate::gossipsub::rpc::{validate_message_proto, ControlMessageProto, MessageRpc, RpcProto};
 use crate::gossipsub::seq_no::{
@@ -327,7 +327,7 @@ pub struct Behaviour<D = IdentityTransform, F = AllowAllSubscriptionFilter> {
 
     /// Stores optional peer score data together with thresholds, decay interval and gossip
     /// promises.
-    peer_score: Option<(PeerScore, PeerScoreThresholds, Ticker, GossipPromises)>,
+    peer_score: Box<dyn PeerScoreService + Send>,
 
     /// Counts the number of `IHAVE` received from each peer since the last heartbeat.
     count_received_ihave: HashMap<PeerId, usize>,
@@ -523,7 +523,7 @@ where
             heartbeat_ticks: 0,
             px_peers: HashSet::new(),
             outbound_peers: HashSet::new(),
-            peer_score: None,
+            peer_score: Box::new(NoopPeerScoreService::new()),
             count_received_ihave: HashMap::new(),
             count_sent_iwant: HashMap::new(),
             pending_iwant_msgs: HashSet::new(),
@@ -576,9 +576,7 @@ where
 
     /// Returns the gossipsub score for a given peer, if one exists.
     pub fn peer_score(&self, peer_id: &PeerId) -> Option<f64> {
-        self.peer_score
-            .as_ref()
-            .map(|(score, ..)| score.score(peer_id))
+        self.peer_score.peer_score(peer_id)
     }
 
     /// Subscribe to a topic.
@@ -734,7 +732,10 @@ where
                     set.iter()
                         .filter(|p| {
                             self.explicit_peers.contains(*p)
-                                || !self.score_below_threshold(p, |ts| ts.publish_threshold).0
+                                || !self
+                                    .peer_score
+                                    .score_below_threshold(p, |ts| ts.publish_threshold)
+                                    .0
                         })
                         .cloned(),
                 );
@@ -750,6 +751,7 @@ where
                 for (peer, connections) in &self.connected_peers {
                     if connections.kind == PeerKind::Floodsub
                         && !self
+                            .peer_score
                             .score_below_threshold(peer, |ts| ts.publish_threshold)
                             .0
                     {
@@ -777,6 +779,7 @@ where
                                 |p| {
                                     !self.explicit_peers.contains(p)
                                         && !self
+                                            .peer_score
                                             .score_below_threshold(p, |pst| pst.publish_threshold)
                                             .0
                                 }
@@ -897,16 +900,19 @@ where
 
             // Tell peer_score about reject
             // Reject the original source, and any duplicates we've seen from other peers.
-            if let Some((peer_score, ..)) = &mut self.peer_score {
-                peer_score.reject_message(
-                    propagation_source,
+            self.peer_score.peer_score_reject_message(
+                propagation_source,
+                msg_id,
+                &raw_message.topic,
+                reject_reason,
+            );
+            for peer in originating_peers.iter() {
+                self.peer_score.peer_score_reject_message(
+                    peer,
                     msg_id,
                     &raw_message.topic,
                     reject_reason,
                 );
-                for peer in originating_peers.iter() {
-                    peer_score.reject_message(peer, msg_id, &raw_message.topic, reject_reason);
-                }
             }
             Ok(true)
         } else {
@@ -968,13 +974,11 @@ where
         params.validate()?;
         threshold.validate()?;
 
-        if self.peer_score.is_some() {
-            return Err("Peer score set twice".into());
-        }
-
         let interval = Ticker::new(params.decay_interval);
         let peer_score = PeerScore::new_with_message_delivery_time_callback(params, callback);
-        self.peer_score = Some((peer_score, threshold, interval, GossipPromises::default()));
+        self.peer_score = Box::new(GossipsubPeerScoreService::new(
+            peer_score, threshold, interval,
+        ));
         Ok(())
     }
 
@@ -986,22 +990,16 @@ where
         topic: Topic<H>,
         params: TopicScoreParams,
     ) -> Result<(), &'static str> {
-        if let Some((peer_score, ..)) = &mut self.peer_score {
-            peer_score.set_topic_params(topic.hash(), params);
-            Ok(())
-        } else {
-            Err("Peer score must be initialised with `with_peer_score()`")
-        }
+        self.peer_score
+            .peer_score_set_topic_params(topic.hash(), params);
+        Ok(())
     }
 
     /// Sets the application specific score for a peer. Returns true if scoring is active and
     /// the peer is connected or if the score of the peer is not yet expired, false otherwise.
     pub fn set_application_score(&mut self, peer_id: &PeerId, new_score: f64) -> bool {
-        if let Some((peer_score, ..)) = &mut self.peer_score {
-            peer_score.set_application_score(peer_id, new_score)
-        } else {
-            false
-        }
+        self.peer_score
+            .peer_score_set_application_score(peer_id, new_score)
     }
 
     /// Gossipsub JOIN(topic) - adds topic peers to mesh and sends them GRAFT messages.
@@ -1029,7 +1027,7 @@ where
             // remove explicit peers, peers with negative scores, and backoffed peers
             peers.retain(|p| {
                 !self.explicit_peers.contains(p)
-                    && !self.score_below_threshold(p, |_| 0.0).0
+                    && !self.peer_score.score_below_threshold(p, |_| 0.0).0
                     && !self.backoffs.is_backoff_with_slack(topic_hash, p)
             });
 
@@ -1066,7 +1064,7 @@ where
                 |peer| {
                     !added_peers.contains(peer)
                         && !self.explicit_peers.contains(peer)
-                        && !self.score_below_threshold(peer, |_| 0.0).0
+                        && !self.peer_score.score_below_threshold(peer, |_| 0.0).0
                         && !self.backoffs.is_backoff_with_slack(topic_hash, peer)
                 },
             );
@@ -1090,9 +1088,7 @@ where
         for peer_id in added_peers {
             // Send a GRAFT control message
             debug!("JOIN: Sending Graft message to peer: {:?}", peer_id);
-            if let Some((peer_score, ..)) = &mut self.peer_score {
-                peer_score.graft(&peer_id, topic_hash.clone());
-            }
+            self.peer_score.peer_score_graft(&peer_id, topic_hash);
             Self::control_pool_add(
                 &mut self.control_pool,
                 peer_id,
@@ -1126,9 +1122,7 @@ where
         do_px: bool,
         on_unsubscribe: bool,
     ) -> ControlAction {
-        if let Some((peer_score, ..)) = &mut self.peer_score {
-            peer_score.prune(peer, topic_hash.clone());
-        }
+        self.peer_score.peer_score_prune(peer, topic_hash);
 
         match self.connected_peers.get(peer).map(|v| &v.kind) {
             Some(PeerKind::Floodsub) => {
@@ -1155,7 +1149,7 @@ where
                 &self.connected_peers,
                 topic_hash,
                 self.config.prune_peers(),
-                |p| p != peer && !self.score_below_threshold(p, |_| 0.0).0,
+                |p| p != peer && !self.peer_score.score_below_threshold(p, |_| 0.0).0,
             )
             .into_iter()
             .map(|p| PeerInfo { peer_id: Some(p) })
@@ -1220,32 +1214,6 @@ where
         }
     }
 
-    /// Determines if a peer's score is below a given `PeerScoreThreshold` chosen via the
-    /// `threshold` parameter.
-    fn score_below_threshold(
-        &self,
-        peer_id: &PeerId,
-        threshold: impl Fn(&PeerScoreThresholds) -> f64,
-    ) -> (bool, f64) {
-        Self::score_below_threshold_from_scores(&self.peer_score, peer_id, threshold)
-    }
-
-    fn score_below_threshold_from_scores(
-        peer_score: &Option<(PeerScore, PeerScoreThresholds, Ticker, GossipPromises)>,
-        peer_id: &PeerId,
-        threshold: impl Fn(&PeerScoreThresholds) -> f64,
-    ) -> (bool, f64) {
-        if let Some((peer_score, thresholds, ..)) = peer_score {
-            let score = peer_score.score(peer_id);
-            if score < threshold(thresholds) {
-                return (true, score);
-            }
-            (false, score)
-        } else {
-            (false, 0.0)
-        }
-    }
-
     fn handle_received_rpc(&mut self, propagation_source: &PeerId, rpc: RpcProto) {
         // Handle subscriptions
         let subscriptions: Vec<Subscription> =
@@ -1258,8 +1226,9 @@ where
 
         // TODO: Review the concept of "gray-listing" peers
         // Check if peer is gray-listed in which case we ignore the event
-        if let (true, _) =
-            self.score_below_threshold(propagation_source, |pst| pst.graylist_threshold)
+        if let (true, _) = self
+            .peer_score
+            .score_below_threshold(propagation_source, |pst| pst.graylist_threshold)
         {
             debug!("RPC Dropped from gray-listed peer {}", propagation_source);
             return;
@@ -1313,23 +1282,31 @@ where
         }
 
         // Handle any invalid messages from this peer
-        if self.peer_score.is_some() {
-            for (raw_message, validation_error) in invalid_messages {
-                self.handle_invalid_message(
+        for (raw_message, validation_error) in invalid_messages {
+            let reject_reason = RejectReason::ValidationError(validation_error);
+            self.metrics.register_invalid_message(&raw_message.topic);
+
+            let fast_message_id_cache = &self.fast_message_id_cache;
+
+            if let Some(msg_id) = self
+                .config
+                .fast_message_id(&raw_message)
+                .and_then(|id| fast_message_id_cache.get(&id))
+            {
+                self.peer_score.peer_score_reject_message(
                     propagation_source,
-                    &raw_message,
-                    RejectReason::ValidationError(validation_error),
-                )
-            }
-        } else {
-            // log the invalid messages
-            for (message, validation_error) in invalid_messages {
-                warn!(
-                    "Invalid message. Reason: {:?} propagation_peer {} source {:?}",
-                    validation_error,
-                    propagation_source.to_string(),
-                    message.source
+                    msg_id,
+                    &raw_message.topic,
+                    reject_reason,
                 );
+                self.peer_score
+                    .gossip_promises_reject_message(msg_id, &reject_reason);
+            } else {
+                // The message is invalid, we reject it ignoring any gossip promises. If a peer is
+                // advertising this message via an IHAVE and it's invalid it will be double
+                // penalized, one for sending us an invalid and again for breaking a promise.
+                self.peer_score
+                    .peer_score_reject_invalid_message(propagation_source, &raw_message.topic);
             }
         }
 
@@ -1398,7 +1375,10 @@ where
     /// requests it with an IWANT control message.
     fn handle_ihave(&mut self, peer_id: &PeerId, ihave_msgs: Vec<(TopicHash, Vec<MessageId>)>) {
         // We ignore IHAVE gossip from any peer whose score is below the gossip threshold
-        if let (true, score) = self.score_below_threshold(peer_id, |pst| pst.gossip_threshold) {
+        if let (true, score) = self
+            .peer_score
+            .score_below_threshold(peer_id, |pst| pst.gossip_threshold)
+        {
             debug!(
                 "IHAVE: ignoring peer {:?} with score below threshold [score = {}]",
                 peer_id, score
@@ -1441,10 +1421,7 @@ where
                 return false;
             }
 
-            self.peer_score
-                .as_ref()
-                .map(|(_, _, _, promises)| !promises.contains(id))
-                .unwrap_or(true)
+            self.peer_score.promises_contains(id)
         };
 
         for (topic, ids) in ihave_msgs {
@@ -1494,13 +1471,11 @@ where
                 self.pending_iwant_msgs.insert(message_id.clone());
             }
 
-            if let Some((_, _, _, gossip_promises)) = &mut self.peer_score {
-                gossip_promises.add_promise(
-                    *peer_id,
-                    &iwant_ids_vec,
-                    Instant::now() + self.config.iwant_followup_time(),
-                );
-            }
+            self.peer_score.promises_add(
+                *peer_id,
+                &iwant_ids_vec,
+                Instant::now() + self.config.iwant_followup_time(),
+            );
             trace!(
                 "IHAVE: Asking for the following messages from {}: {:?}",
                 peer_id,
@@ -1522,7 +1497,10 @@ where
     /// forwarded to the requesting peer.
     fn handle_iwant(&mut self, peer_id: &PeerId, iwant_msgs: Vec<MessageId>) {
         // We ignore IWANT gossip from any peer whose score is below the gossip threshold
-        if let (true, score) = self.score_below_threshold(peer_id, |pst| pst.gossip_threshold) {
+        if let (true, score) = self
+            .peer_score
+            .score_below_threshold(peer_id, |pst| pst.gossip_threshold)
+        {
             debug!(
                 "IWANT: ignoring peer {:?} with score below threshold [score = {}]",
                 peer_id, score
@@ -1614,7 +1592,7 @@ where
             // but don't PX
             do_px = false
         } else {
-            let (below_zero, score) = self.score_below_threshold(peer_id, |_| 0.0);
+            let (below_zero, score) = self.peer_score.score_below_threshold(peer_id, |_| 0.0);
             let now = Instant::now();
             for topic_hash in topics {
                 if let Some(peers) = self.mesh.get_mut(&topic_hash) {
@@ -1635,22 +1613,21 @@ where
                                 "[Penalty] Peer attempted graft within backoff time, penalizing {}",
                                 peer_id
                             );
-                            // add behavioural penalty
-                            if let Some((peer_score, ..)) = &mut self.peer_score {
-                                self.metrics.register_score_penalty(Penalty::GraftBackoff);
-                                peer_score.add_penalty(peer_id, 1);
 
-                                // check the flood cutoff
-                                // See: https://github.com/rust-lang/rust-clippy/issues/10061
-                                #[allow(unknown_lints, clippy::unchecked_duration_subtraction)]
-                                let flood_cutoff = (backoff_time
-                                    + self.config.graft_flood_threshold())
-                                    - self.config.prune_backoff();
-                                if flood_cutoff > now {
-                                    //extra penalty
-                                    peer_score.add_penalty(peer_id, 1);
-                                }
+                            // add behavioural penalty
+                            self.metrics.register_score_penalty(Penalty::GraftBackoff);
+                            self.peer_score.peer_score_add_penalty(peer_id, 1);
+
+                            // check the flood cutoff
+                            // See: https://github.com/rust-lang/rust-clippy/issues/10061
+                            #[allow(unknown_lints, clippy::unchecked_duration_subtraction)]
+                            let flood_cutoff = (backoff_time + self.config.graft_flood_threshold())
+                                - self.config.prune_backoff();
+                            if flood_cutoff > now {
+                                //extra penalty
+                                self.peer_score.peer_score_add_penalty(peer_id, 1);
                             }
+
                             // no PX
                             do_px = false;
 
@@ -1704,9 +1681,7 @@ where
                         &self.connected_peers,
                     );
 
-                    if let Some((peer_score, ..)) = &mut self.peer_score {
-                        peer_score.graft(peer_id, topic_hash);
-                    }
+                    self.peer_score.peer_score_graft(peer_id, &topic_hash);
                 } else {
                     // don't do PX when there is an unknown topic to avoid leaking our peers
                     do_px = false;
@@ -1767,9 +1742,7 @@ where
                 );
                 self.metrics.peers_removed(topic_hash, reason, 1);
 
-                if let Some((peer_score, ..)) = &mut self.peer_score {
-                    peer_score.prune(peer_id, topic_hash.clone());
-                }
+                self.peer_score.peer_score_prune(peer_id, topic_hash);
 
                 update_backoff = true;
 
@@ -1802,8 +1775,9 @@ where
         prune_data: Vec<(TopicHash, Vec<PeerInfo>, Option<u64>)>,
     ) {
         debug!("Handling PRUNE message for peer: {}", peer_id);
-        let (below_threshold, score) =
-            self.score_below_threshold(peer_id, |pst| pst.accept_px_threshold);
+        let (below_threshold, score) = self
+            .peer_score
+            .score_below_threshold(peer_id, |pst| pst.accept_px_threshold);
         for (topic_hash, px, backoff) in prune_data {
             self.remove_peer_from_mesh(peer_id, &topic_hash, backoff, true, Churn::Prune);
 
@@ -1884,15 +1858,14 @@ where
                 "Rejecting message from blacklisted peer: {}",
                 propagation_source
             );
-            if let Some((peer_score, .., gossip_promises)) = &mut self.peer_score {
-                peer_score.reject_message(
-                    propagation_source,
-                    msg_id,
-                    &raw_message.topic,
-                    RejectReason::BlackListedPeer,
-                );
-                gossip_promises.reject_message(msg_id, &RejectReason::BlackListedPeer);
-            }
+            self.peer_score.peer_score_reject_message(
+                propagation_source,
+                msg_id,
+                &raw_message.topic,
+                RejectReason::BlackListedPeer,
+            );
+            self.peer_score
+                .gossip_promises_reject_message(msg_id, &RejectReason::BlackListedPeer);
             return false;
         }
 
@@ -1951,13 +1924,12 @@ where
                 let msg_id = msg_id.clone();
                 // Report the duplicate
                 if self.message_is_valid(&msg_id, &mut raw_message, propagation_source) {
-                    if let Some((peer_score, ..)) = &mut self.peer_score {
-                        peer_score.duplicated_message(
-                            propagation_source,
-                            &msg_id,
-                            &raw_message.topic,
-                        );
-                    }
+                    self.peer_score.peer_score_duplicated_message(
+                        propagation_source,
+                        &msg_id,
+                        &raw_message.topic,
+                    );
+
                     // Update the cache, informing that we have received a duplicate from another peer.
                     // The peers in this cache are used to prevent us forwarding redundant messages onto
                     // these peers.
@@ -2004,9 +1976,11 @@ where
 
         if !self.duplicate_cache.insert(msg_id.clone()) {
             debug!("Message already received, ignoring. Message: {}", msg_id);
-            if let Some((peer_score, ..)) = &mut self.peer_score {
-                peer_score.duplicated_message(propagation_source, &msg_id, &message.topic);
-            }
+            self.peer_score.peer_score_duplicated_message(
+                propagation_source,
+                &msg_id,
+                &message.topic,
+            );
             self.mcache.observe_duplicate(&msg_id, propagation_source);
             return;
         }
@@ -2020,10 +1994,9 @@ where
 
         // Tells score that message arrived (but is maybe not fully validated yet).
         // Consider the message as delivered for gossip promises.
-        if let Some((peer_score, .., gossip_promises)) = &mut self.peer_score {
-            peer_score.validate_message(propagation_source, &msg_id, &message.topic);
-            gossip_promises.message_delivered(&msg_id);
-        }
+        self.peer_score
+            .peer_score_validate_message(propagation_source, &msg_id, &message.topic);
+        self.peer_score.promises_message_delivered(&msg_id);
 
         // Add the message to our memcache
         let cached_message = {
@@ -2084,29 +2057,29 @@ where
         raw_message: &RawMessage,
         reject_reason: RejectReason,
     ) {
-        if let Some((peer_score, .., gossip_promises)) = &mut self.peer_score {
-            self.metrics.register_invalid_message(&raw_message.topic);
+        self.metrics.register_invalid_message(&raw_message.topic);
 
-            let fast_message_id_cache = &self.fast_message_id_cache;
+        let fast_message_id_cache = &self.fast_message_id_cache;
 
-            if let Some(msg_id) = self
-                .config
-                .fast_message_id(raw_message)
-                .and_then(|id| fast_message_id_cache.get(&id))
-            {
-                peer_score.reject_message(
-                    propagation_source,
-                    msg_id,
-                    &raw_message.topic,
-                    reject_reason,
-                );
-                gossip_promises.reject_message(msg_id, &reject_reason);
-            } else {
-                // The message is invalid, we reject it ignoring any gossip promises. If a peer is
-                // advertising this message via an IHAVE and it's invalid it will be double
-                // penalized, one for sending us an invalid and again for breaking a promise.
-                peer_score.reject_invalid_message(propagation_source, &raw_message.topic);
-            }
+        if let Some(msg_id) = self
+            .config
+            .fast_message_id(raw_message)
+            .and_then(|id| fast_message_id_cache.get(&id))
+        {
+            self.peer_score.peer_score_reject_message(
+                propagation_source,
+                msg_id,
+                &raw_message.topic,
+                reject_reason,
+            );
+            self.peer_score
+                .gossip_promises_reject_message(msg_id, &reject_reason);
+        } else {
+            // The message is invalid, we reject it ignoring any gossip promises. If a peer is
+            // advertising this message via an IHAVE and it's invalid it will be double
+            // penalized, one for sending us an invalid and again for breaking a promise.
+            self.peer_score
+                .peer_score_reject_invalid_message(propagation_source, &raw_message.topic);
         }
     }
 
@@ -2185,12 +2158,10 @@ where
                                 .map(|v| &v.kind),
                             Some(PeerKind::Gossipsubv1_1) | Some(PeerKind::Gossipsub)
                         )
-                        && !Self::score_below_threshold_from_scores(
-                            &self.peer_score,
-                            propagation_source,
-                            |_| 0.0,
-                        )
-                        .0
+                        && !self
+                            .peer_score
+                            .score_below_threshold(propagation_source, |_| 0.0)
+                            .0
                         && !self
                             .backoffs
                             .is_backoff_with_slack(topic_hash, propagation_source)
@@ -2213,9 +2184,8 @@ where
                                     propagation_source.to_string(),
                                     topic_hash
                                 );
-                                if let Some((peer_score, ..)) = &mut self.peer_score {
-                                    peer_score.graft(propagation_source, topic_hash.clone());
-                                }
+                                self.peer_score
+                                    .peer_score_graft(propagation_source, topic_hash);
                                 topics_to_graft.push(topic_hash.clone());
                             }
                         }
@@ -2299,16 +2269,6 @@ where
         );
     }
 
-    /// Applies penalties to peers that did not respond to our IWANT requests.
-    fn apply_iwant_penalties(&mut self) {
-        if let Some((peer_score, .., gossip_promises)) = &mut self.peer_score {
-            for (peer, count) in gossip_promises.get_broken_promises() {
-                peer_score.add_penalty(&peer, count);
-                self.metrics.register_score_penalty(Penalty::BrokenPromise);
-            }
-        }
-    }
-
     /// Heartbeat function which shifts the memcache and updates the mesh.
     fn heartbeat(&mut self) {
         debug!("Starting heartbeat");
@@ -2327,8 +2287,11 @@ where
         self.count_sent_iwant.clear();
         self.count_received_ihave.clear();
 
-        // apply iwant penalties
-        self.apply_iwant_penalties();
+        // Apply penalties to peers that did not respond to our IWANT requests.
+        for (peer, count) in self.peer_score.get_broken_promises() {
+            self.peer_score.peer_score_add_penalty(&peer, count);
+            self.metrics.register_score_penalty(Penalty::BrokenPromise);
+        }
 
         // check connections to explicit peers
         if self.heartbeat_ticks % self.config.check_explicit_peers_ticks() == 0 {
@@ -2339,12 +2302,11 @@ where
 
         // Cache the scores of all connected peers, and record metrics for current penalties.
         let mut scores = HashMap::with_capacity(self.connected_peers.len());
-        if let Some((peer_score, ..)) = &self.peer_score {
-            for peer_id in self.connected_peers.keys() {
-                scores
-                    .entry(peer_id)
-                    .or_insert_with(|| peer_score.metric_score(peer_id, &mut self.metrics));
-            }
+        for peer_id in self.connected_peers.keys() {
+            scores.entry(peer_id).or_insert_with(|| {
+                self.peer_score
+                    .peer_score_metric_score(peer_id, &mut self.metrics)
+            });
         }
 
         // maintain the mesh for each topic
@@ -2512,75 +2474,76 @@ where
                 }
             }
 
-            // should we try to improve the mesh with opportunistic grafting?
-            if self.heartbeat_ticks % self.config.opportunistic_graft_ticks() == 0
-                && peers.len() > 1
-                && self.peer_score.is_some()
-            {
-                if let Some((_, thresholds, _, _)) = &self.peer_score {
-                    // Opportunistic grafting works as follows: we check the median score of peers
-                    // in the mesh; if this score is below the opportunisticGraftThreshold, we
-                    // select a few peers at random with score over the median.
-                    // The intention is to (slowly) improve an underperforming mesh by introducing
-                    // good scoring peers that may have been gossiping at us. This allows us to
-                    // get out of sticky situations where we are stuck with poor peers and also
-                    // recover from churn of good peers.
+            // TODO: Review this oportunistic grafting section
+            // // should we try to improve the mesh with opportunistic grafting?
+            // if self.heartbeat_ticks % self.config.opportunistic_graft_ticks() == 0
+            //     && peers.len() > 1
+            //     && self.peer_score.is_some()
+            // {
+            //     if let Some((_, thresholds, _, _)) = &self.peer_score {
+            //         // Opportunistic grafting works as follows: we check the median score of peers
+            //         // in the mesh; if this score is below the opportunisticGraftThreshold, we
+            //         // select a few peers at random with score over the median.
+            //         // The intention is to (slowly) improve an underperforming mesh by introducing
+            //         // good scoring peers that may have been gossiping at us. This allows us to
+            //         // get out of sticky situations where we are stuck with poor peers and also
+            //         // recover from churn of good peers.
+            //
+            //         // now compute the median peer score in the mesh
+            //         let mut peers_by_score: Vec<_> = peers.iter().collect();
+            //         peers_by_score.sort_by(|p1, p2| {
+            //             let p1_score = *scores.get(p1).unwrap_or(&0.0);
+            //             let p2_score = *scores.get(p2).unwrap_or(&0.0);
+            //             p1_score.partial_cmp(&p2_score).unwrap_or(Ordering::Equal)
+            //         });
+            //
+            //         let middle = peers_by_score.len() / 2;
+            //         let median = if peers_by_score.len() % 2 == 0 {
+            //             let sub_middle_peer = *peers_by_score
+            //                 .get(middle - 1)
+            //                 .expect("middle < vector length and middle > 0 since peers.len() > 0");
+            //             let sub_middle_score = *scores.get(sub_middle_peer).unwrap_or(&0.0);
+            //             let middle_peer =
+            //                 *peers_by_score.get(middle).expect("middle < vector length");
+            //             let middle_score = *scores.get(middle_peer).unwrap_or(&0.0);
+            //
+            //             (sub_middle_score + middle_score) * 0.5
+            //         } else {
+            //             *scores
+            //                 .get(*peers_by_score.get(middle).expect("middle < vector length"))
+            //                 .unwrap_or(&0.0)
+            //         };
+            //
+            //         // if the median score is below the threshold, select a better peer (if any) and
+            //         // GRAFT
+            //         if median < thresholds.opportunistic_graft_threshold {
+            //             let peer_list = get_random_peers(
+            //                 topic_peers,
+            //                 &self.connected_peers,
+            //                 topic_hash,
+            //                 self.config.opportunistic_graft_peers(),
+            //                 |peer_id| {
+            //                     !peers.contains(peer_id)
+            //                         && !explicit_peers.contains(peer_id)
+            //                         && !backoffs.is_backoff_with_slack(topic_hash, peer_id)
+            //                         && *scores.get(peer_id).unwrap_or(&0.0) > median
+            //                 },
+            //             );
+            //             for peer in &peer_list {
+            //                 let current_topic = to_graft.entry(*peer).or_insert_with(Vec::new);
+            //                 current_topic.push(topic_hash.clone());
+            //             }
+            //             // update the mesh
+            //             debug!(
+            //                 "Opportunistically graft in topic {} with peers {:?}",
+            //                 topic_hash, peer_list
+            //             );
+            //             self.metrics.peers_included(topic_hash, Inclusion::Random, peer_list.len());
+            //             peers.extend(peer_list);
+            //         }
+            //     }
+            // }
 
-                    // now compute the median peer score in the mesh
-                    let mut peers_by_score: Vec<_> = peers.iter().collect();
-                    peers_by_score.sort_by(|p1, p2| {
-                        let p1_score = *scores.get(p1).unwrap_or(&0.0);
-                        let p2_score = *scores.get(p2).unwrap_or(&0.0);
-                        p1_score.partial_cmp(&p2_score).unwrap_or(Ordering::Equal)
-                    });
-
-                    let middle = peers_by_score.len() / 2;
-                    let median = if peers_by_score.len() % 2 == 0 {
-                        let sub_middle_peer = *peers_by_score
-                            .get(middle - 1)
-                            .expect("middle < vector length and middle > 0 since peers.len() > 0");
-                        let sub_middle_score = *scores.get(sub_middle_peer).unwrap_or(&0.0);
-                        let middle_peer =
-                            *peers_by_score.get(middle).expect("middle < vector length");
-                        let middle_score = *scores.get(middle_peer).unwrap_or(&0.0);
-
-                        (sub_middle_score + middle_score) * 0.5
-                    } else {
-                        *scores
-                            .get(*peers_by_score.get(middle).expect("middle < vector length"))
-                            .unwrap_or(&0.0)
-                    };
-
-                    // if the median score is below the threshold, select a better peer (if any) and
-                    // GRAFT
-                    if median < thresholds.opportunistic_graft_threshold {
-                        let peer_list = get_random_peers(
-                            topic_peers,
-                            &self.connected_peers,
-                            topic_hash,
-                            self.config.opportunistic_graft_peers(),
-                            |peer_id| {
-                                !peers.contains(peer_id)
-                                    && !explicit_peers.contains(peer_id)
-                                    && !backoffs.is_backoff_with_slack(topic_hash, peer_id)
-                                    && *scores.get(peer_id).unwrap_or(&0.0) > median
-                            },
-                        );
-                        for peer in &peer_list {
-                            let current_topic = to_graft.entry(*peer).or_insert_with(Vec::new);
-                            current_topic.push(topic_hash.clone());
-                        }
-                        // update the mesh
-                        debug!(
-                            "Opportunistically graft in topic {} with peers {:?}",
-                            topic_hash, peer_list
-                        );
-                        self.metrics
-                            .peers_included(topic_hash, Inclusion::Random, peer_list.len());
-                        peers.extend(peer_list);
-                    }
-                }
-            }
             // Register the final count of peers in the mesh
             self.metrics.set_mesh_peers(topic_hash, peers.len())
         }
@@ -2606,10 +2569,7 @@ where
         // check if our peers are still a part of the topic
         for (topic_hash, peers) in self.fanout.iter_mut() {
             let mut to_remove_peers = Vec::new();
-            let publish_threshold = match &self.peer_score {
-                Some((_, thresholds, _, _)) => thresholds.publish_threshold,
-                _ => 0.0,
-            };
+            let publish_threshold = self.peer_score.publish_threshold();
             for peer in peers.iter() {
                 // is the peer still subscribed to the topic?
                 let peer_score = *scores.get(peer).unwrap_or(&0.0);
@@ -2657,32 +2617,33 @@ where
             }
         }
 
-        if self.peer_score.is_some() {
-            trace!("Mesh message deliveries: {:?}", {
-                self.mesh
-                    .iter()
-                    .map(|(t, peers)| {
-                        (
-                            t.clone(),
-                            peers
-                                .iter()
-                                .map(|p| {
-                                    (
-                                        *p,
-                                        self.peer_score
-                                            .as_ref()
-                                            .expect("peer_score.is_some()")
-                                            .0
-                                            .mesh_message_deliveries(p, t)
-                                            .unwrap_or(0.0),
-                                    )
-                                })
-                                .collect::<HashMap<PeerId, f64>>(),
-                        )
-                    })
-                    .collect::<HashMap<TopicHash, HashMap<PeerId, f64>>>()
-            })
-        }
+        // TODO: Review this trace log
+        // if self.peer_score.is_some() {
+        //     trace!("Mesh message deliveries: {:?}", {
+        //         self.mesh
+        //             .iter()
+        //             .map(|(t, peers)| {
+        //                 (
+        //                     t.clone(),
+        //                     peers
+        //                         .iter()
+        //                         .map(|p| {
+        //                             (
+        //                                 *p,
+        //                                 self.peer_score
+        //                                     .as_ref()
+        //                                     .expect("peer_score.is_some()")
+        //                                     .0
+        //                                     .mesh_message_deliveries(p, t)
+        //                                     .unwrap_or(0.0),
+        //                             )
+        //                         })
+        //                         .collect::<HashMap<PeerId, f64>>(),
+        //                 )
+        //             })
+        //             .collect::<HashMap<TopicHash, HashMap<PeerId, f64>>>()
+        //     })
+        // }
 
         self.emit_gossip();
 
@@ -2740,7 +2701,10 @@ where
                 |peer| {
                     !peers.contains(peer)
                         && !self.explicit_peers.contains(peer)
-                        && !self.score_below_threshold(peer, |ts| ts.gossip_threshold).0
+                        && !self
+                            .peer_score
+                            .score_below_threshold(peer, |ts| ts.gossip_threshold)
+                            .0
                 },
             );
 
@@ -2782,9 +2746,7 @@ where
         for (peer, topics) in to_graft.into_iter() {
             for topic in &topics {
                 // inform scoring of graft
-                if let Some((peer_score, ..)) = &mut self.peer_score {
-                    peer_score.graft(&peer, topic.clone());
-                }
+                self.peer_score.peer_score_graft(&peer, &topic);
 
                 // inform the handler of the peer being added to the mesh
                 // If the peer did not previously exist in any mesh, inform the handler
@@ -2895,10 +2857,9 @@ where
         originating_peers: HashSet<PeerId>,
     ) -> Result<bool, PublishError> {
         // message is fully validated inform peer_score
-        if let Some((peer_score, ..)) = &mut self.peer_score {
-            if let Some(peer) = propagation_source {
-                peer_score.deliver_message(peer, msg_id, &message.topic);
-            }
+        if let Some(peer) = propagation_source {
+            self.peer_score
+                .peer_score_deliver_message(peer, msg_id, &message.topic);
         }
 
         debug!("Forwarding message: {:?}", msg_id);
@@ -3151,16 +3112,14 @@ where
         }
 
         // Add the IP to the peer scoring system
-        if let Some((peer_score, ..)) = &mut self.peer_score {
-            if let Some(ip) = get_ip_addr(endpoint.get_remote_address()) {
-                peer_score.add_ip(&peer_id, ip);
-            } else {
-                trace!(
-                    "Couldn't extract ip from endpoint of peer {} with endpoint {:?}",
-                    peer_id,
-                    endpoint
-                )
-            }
+        if let Some(ip) = get_ip_addr(endpoint.get_remote_address()) {
+            self.peer_score.peer_score_add_ip(&peer_id, ip);
+        } else {
+            trace!(
+                "Couldn't extract ip from endpoint of peer {} with endpoint {:?}",
+                peer_id,
+                endpoint
+            )
         }
 
         // By default we assume a peer is only a floodsub peer.
@@ -3214,9 +3173,7 @@ where
             // Insert an empty set of the topics of this peer until known.
             self.peer_topics.insert(peer_id, Default::default());
 
-            if let Some((peer_score, ..)) = &mut self.peer_score {
-                peer_score.add_peer(peer_id);
-            }
+            self.peer_score.peer_score_add_peer(peer_id);
         }
     }
 
@@ -3231,16 +3188,14 @@ where
         }: ConnectionClosed<<Self as NetworkBehaviour>::ConnectionHandler>,
     ) {
         // Remove IP from peer scoring system
-        if let Some((peer_score, ..)) = &mut self.peer_score {
-            if let Some(ip) = get_ip_addr(endpoint.get_remote_address()) {
-                peer_score.remove_ip(&peer_id, &ip);
-            } else {
-                trace!(
-                    "Couldn't extract ip from endpoint of peer {} with endpoint {:?}",
-                    peer_id,
-                    endpoint
-                )
-            }
+        if let Some(ip) = get_ip_addr(endpoint.get_remote_address()) {
+            self.peer_score.peer_score_remove_ip(&peer_id, &ip);
+        } else {
+            trace!(
+                "Couldn't extract ip from endpoint of peer {} with endpoint {:?}",
+                peer_id,
+                endpoint
+            )
         }
 
         if remaining_established != 0 {
@@ -3341,9 +3296,7 @@ where
 
             self.connected_peers.remove(&peer_id);
 
-            if let Some((peer_score, ..)) = &mut self.peer_score {
-                peer_score.remove_peer(&peer_id);
-            }
+            self.peer_score.peer_score_remove_peer(&peer_id);
         }
     }
 
@@ -3357,25 +3310,24 @@ where
         }: AddressChange,
     ) {
         // Exchange IP in peer scoring system
-        if let Some((peer_score, ..)) = &mut self.peer_score {
-            if let Some(ip) = get_ip_addr(endpoint_old.get_remote_address()) {
-                peer_score.remove_ip(&peer_id, &ip);
-            } else {
-                trace!(
-                    "Couldn't extract ip from endpoint of peer {} with endpoint {:?}",
-                    &peer_id,
-                    endpoint_old
-                )
-            }
-            if let Some(ip) = get_ip_addr(endpoint_new.get_remote_address()) {
-                peer_score.add_ip(&peer_id, ip);
-            } else {
-                trace!(
-                    "Couldn't extract ip from endpoint of peer {} with endpoint {:?}",
-                    peer_id,
-                    endpoint_new
-                )
-            }
+        if let Some(ip) = get_ip_addr(endpoint_old.get_remote_address()) {
+            self.peer_score.peer_score_remove_ip(&peer_id, &ip);
+        } else {
+            trace!(
+                "Couldn't extract ip from endpoint of peer {} with endpoint {:?}",
+                &peer_id,
+                endpoint_old
+            )
+        }
+
+        if let Some(ip) = get_ip_addr(endpoint_new.get_remote_address()) {
+            self.peer_score.peer_score_add_ip(&peer_id, ip);
+        } else {
+            trace!(
+                "Couldn't extract ip from endpoint of peer {} with endpoint {:?}",
+                peer_id,
+                endpoint_new
+            )
         }
     }
 }
@@ -3482,11 +3434,7 @@ where
         }
 
         // update scores
-        if let Some((peer_score, _, interval, _)) = &mut self.peer_score {
-            while let Poll::Ready(Some(_)) = interval.poll_next_unpin(cx) {
-                peer_score.refresh_scores();
-            }
-        }
+        self.peer_score.poll_ticker_refresh_scores(cx);
 
         while let Poll::Ready(Some(_)) = self.heartbeat.poll_next_unpin(cx) {
             self.heartbeat();
