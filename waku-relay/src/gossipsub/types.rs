@@ -43,16 +43,8 @@ pub enum MessageAcceptance {
     Ignore,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PeerConnections {
-    /// The kind of protocol the peer supports.
-    pub(crate) kind: PeerKind,
-    /// Its current connections.
-    pub(crate) connections: Vec<ConnectionId>,
-}
-
 /// Describes the types of peers that can exist in the gossipsub context.
-#[derive(Debug, Clone, PartialEq, Hash, EncodeLabelValue, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Hash, EncodeLabelValue, Eq)]
 pub enum PeerKind {
     /// A gossipsub 1.1 peer.
     Gossipsubv1_1,
@@ -62,6 +54,16 @@ pub enum PeerKind {
     Floodsub,
     /// The peer doesn't support any of the protocols.
     NotSupported,
+}
+
+impl PeerKind {
+    pub fn is_gossipsub(&self) -> bool {
+        matches!(self, Self::Gossipsub | Self::Gossipsubv1_1)
+    }
+
+    pub fn is_floodsub(&self) -> bool {
+        matches!(self, Self::Floodsub)
+    }
 }
 
 impl fmt::Display for PeerKind {

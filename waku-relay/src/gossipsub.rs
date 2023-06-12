@@ -165,6 +165,7 @@ mod backoff;
 mod behaviour;
 mod codec;
 mod config;
+mod connection_manager;
 mod error;
 mod event;
 mod gossip_promises;
