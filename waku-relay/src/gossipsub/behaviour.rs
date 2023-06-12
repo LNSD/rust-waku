@@ -581,6 +581,7 @@ where
     /// subscribed.
     pub fn subscribe<H: Hasher>(&mut self, topic: &Topic<H>) -> Result<bool, SubscriptionError> {
         debug!("Subscribing to topic: {}", topic);
+
         let topic_hash = topic.hash();
         if !self.subscription_filter.can_subscribe(&topic_hash) {
             return Err(SubscriptionError::NotAllowed);
@@ -606,7 +607,7 @@ where
 
             for peer in peer_list {
                 debug!("Sending SUBSCRIBE to peer: {:?}", peer);
-                self.send_message(peer, event.clone())
+                self.send_rpc_message(peer, event.clone())
                     .map_err(SubscriptionError::PublishError)?;
             }
         }
@@ -623,11 +624,10 @@ where
     /// Returns [`Ok(true)`] if we were subscribed to this topic.
     pub fn unsubscribe<H: Hasher>(&mut self, topic: &Topic<H>) -> Result<bool, PublishError> {
         debug!("Unsubscribing from topic: {}", topic);
-        let topic_hash = topic.hash();
 
+        let topic_hash = topic.hash();
         if self.mesh.get(&topic_hash).is_none() {
             debug!("Already unsubscribed from topic: {:?}", topic_hash);
-            // we are not subscribed
             return Ok(false);
         }
 
@@ -646,7 +646,7 @@ where
 
             for peer in peer_list {
                 debug!("Sending UNSUBSCRIBE to peer: {}", peer.to_string());
-                self.send_message(peer, event.clone())?;
+                self.send_rpc_message(peer, event.clone())?;
             }
         }
 
@@ -824,7 +824,7 @@ where
         let msg_bytes = event.encoded_len();
         for peer_id in recipient_peers.iter() {
             trace!("Sending message to peer: {:?}", peer_id);
-            self.send_message(*peer_id, event.clone())?;
+            self.send_rpc_message(*peer_id, event.clone())?;
             self.metrics.msg_sent(&topic_hash, msg_bytes);
         }
 
@@ -1001,12 +1001,6 @@ where
     /// Gossipsub JOIN(topic) - adds topic peers to mesh and sends them GRAFT messages.
     fn join(&mut self, topic_hash: &TopicHash) {
         debug!("Running JOIN for topic: {:?}", topic_hash);
-
-        // if we are already in the mesh, return
-        if self.mesh.contains_key(topic_hash) {
-            debug!("JOIN: The topic is already in the mesh, ignoring JOIN");
-            return;
-        }
 
         let mut added_peers = HashSet::new();
 
@@ -1196,6 +1190,7 @@ where
                 );
             }
         }
+
         debug!("Completed LEAVE for topic: {:?}", topic_hash);
     }
 
@@ -1546,7 +1541,7 @@ where
 
             let msg_bytes = message.encoded_len();
 
-            if self.send_message(*peer_id, message).is_err() {
+            if self.send_rpc_message(*peer_id, message).is_err() {
                 error!("Failed to send cached messages. Messages too large");
             } else {
                 // Sending of messages succeeded, register them on the internal metrics.
@@ -1555,6 +1550,7 @@ where
                 }
             }
         }
+
         debug!("Completed IWANT handling for peer: {}", peer_id);
     }
 
@@ -1704,15 +1700,7 @@ where
                 peer_id
             );
 
-            if let Err(e) = self.send_message(
-                *peer_id,
-                Rpc {
-                    subscriptions: Vec::new(),
-                    messages: Vec::new(),
-                    control_msgs: prune_messages,
-                }
-                .into(),
-            ) {
+            if let Err(e) = self.send_control_rpc_message(*peer_id, prune_messages) {
                 error!("Failed to send PRUNE: {:?}", e);
             }
         }
@@ -1901,6 +1889,7 @@ where
 
         true
     }
+
     /// Handles a newly received [`RawMessage`].
     ///
     /// Forwards the message to all peers in the mesh.
@@ -2237,17 +2226,12 @@ where
         // heartbeat.
         if !topics_to_graft.is_empty()
             && self
-                .send_message(
+                .send_control_rpc_message(
                     *propagation_source,
-                    Rpc {
-                        subscriptions: Vec::new(),
-                        messages: Vec::new(),
-                        control_msgs: topics_to_graft
-                            .into_iter()
-                            .map(|topic_hash| ControlAction::Graft { topic_hash })
-                            .collect(),
-                    }
-                    .into(),
+                    topics_to_graft
+                        .into_iter()
+                        .map(|topic_hash| ControlAction::Graft { topic_hash })
+                        .collect(),
                 )
                 .is_err()
         {
@@ -2783,18 +2767,7 @@ where
             }
 
             // send the control messages
-            if self
-                .send_message(
-                    peer,
-                    Rpc {
-                        subscriptions: Vec::new(),
-                        messages: Vec::new(),
-                        control_msgs,
-                    }
-                    .into(),
-                )
-                .is_err()
-            {
+            if self.send_control_rpc_message(peer, control_msgs).is_err() {
                 error!("Failed to send control messages. Message too large");
             }
         }
@@ -2824,15 +2797,7 @@ where
             }
 
             if self
-                .send_message(
-                    *peer,
-                    Rpc {
-                        subscriptions: Vec::new(),
-                        messages: Vec::new(),
-                        control_msgs: remaining_prunes,
-                    }
-                    .into(),
-                )
+                .send_control_rpc_message(*peer, remaining_prunes)
                 .is_err()
             {
                 error!("Failed to send prune messages. Message too large");
@@ -2904,7 +2869,7 @@ where
         let msg_bytes = event.encoded_len();
         for peer in recipient_peers.iter() {
             debug!("Sending message: {:?} to peer {:?}", msg_id, peer);
-            self.send_message(*peer, event.clone())?;
+            self.send_rpc_message(*peer, event.clone())?;
             self.metrics.msg_sent(&message.topic, msg_bytes);
         }
         debug!("Completed forwarding message");
@@ -2926,18 +2891,7 @@ where
     /// Takes each control action mapping and turns it into a message
     fn flush_control_pool(&mut self) {
         for (peer, controls) in self.control_pool.drain().collect::<Vec<_>>() {
-            if self
-                .send_message(
-                    peer,
-                    Rpc {
-                        subscriptions: Vec::new(),
-                        messages: Vec::new(),
-                        control_msgs: controls,
-                    }
-                    .into(),
-                )
-                .is_err()
-            {
+            if self.send_control_rpc_message(peer, controls).is_err() {
                 error!("Failed to flush control pool. Message too large");
             }
         }
@@ -2948,12 +2902,12 @@ where
 
     /// Send a [`Rpc`] message to a peer. This will wrap the message in an arc if it
     /// is not already an arc.
-    fn send_message(&mut self, peer_id: PeerId, message: RpcProto) -> Result<(), PublishError> {
+    fn send_rpc_message(&mut self, peer_id: PeerId, rpc: RpcProto) -> Result<(), PublishError> {
         // If the message is oversized, try and fragment it. If it cannot be fragmented, log an
         // error and drop the message (all individual messages should be small enough to fit in the
         // max_transmit_size)
 
-        let messages = self.fragment_message(message)?;
+        let messages = self.fragment_rpc_message(rpc)?;
 
         for message in messages {
             self.events.push_back(ToSwarm::NotifyHandler {
@@ -2965,9 +2919,37 @@ where
         Ok(())
     }
 
+    fn send_control_rpc_message(
+        &mut self,
+        peer_id: PeerId,
+        control: Vec<ControlAction>,
+    ) -> Result<(), PublishError> {
+        let rpc = Rpc {
+            subscriptions: Vec::new(),
+            messages: Vec::new(),
+            control_msgs: control,
+        };
+
+        self.send_rpc_message(peer_id, rpc.into())
+    }
+
+    fn send_subscription_rpc_message(
+        &mut self,
+        peer_id: PeerId,
+        subscriptions: Vec<Subscription>,
+    ) -> Result<(), PublishError> {
+        let rpc = Rpc {
+            subscriptions,
+            messages: Vec::new(),
+            control_msgs: Vec::new(),
+        };
+
+        self.send_rpc_message(peer_id, rpc.into())
+    }
+
     // If a message is too large to be sent as-is, this attempts to fragment it into smaller RPC
     // messages to be sent.
-    fn fragment_message(&self, rpc: RpcProto) -> Result<Vec<RpcProto>, PublishError> {
+    fn fragment_rpc_message(&self, rpc: RpcProto) -> Result<Vec<RpcProto>, PublishError> {
         if rpc.encoded_len() < self.config.max_transmit_size() {
             return Ok(vec![rpc]);
         }
@@ -3148,15 +3130,7 @@ where
                 if !subscriptions.is_empty() {
                     // send our subscriptions to the peer
                     if self
-                        .send_message(
-                            peer_id,
-                            Rpc {
-                                messages: Vec::new(),
-                                subscriptions,
-                                control_msgs: Vec::new(),
-                            }
-                            .into(),
-                        )
+                        .send_subscription_rpc_message(peer_id, subscriptions)
                         .is_err()
                     {
                         error!("Failed to send subscriptions, message too large");
