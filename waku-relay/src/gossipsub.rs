@@ -169,6 +169,7 @@ mod error;
 mod event;
 mod gossip_promises;
 mod handler;
+mod heartbeat;
 mod mcache;
 mod message_id;
 mod metrics;

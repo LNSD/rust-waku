@@ -49,6 +49,7 @@ use crate::gossipsub::error::{
 };
 use crate::gossipsub::event::Event;
 use crate::gossipsub::handler::{Handler, HandlerEvent, HandlerIn};
+use crate::gossipsub::heartbeat::Heartbeat;
 use crate::gossipsub::mcache::{CachedMessage, MessageCache};
 use crate::gossipsub::message_id::{FastMessageId, MessageId};
 use crate::gossipsub::metrics::{
@@ -309,11 +310,7 @@ pub struct Behaviour<D = IdentityTransform, F = AllowAllSubscriptionFilter> {
     mcache: MessageCache,
 
     /// Heartbeat interval stream.
-    heartbeat: Ticker,
-
-    /// Number of heartbeats since the beginning of time; this allows us to amortize some resource
-    /// clean up -- eg backoff clean up.
-    heartbeat_ticks: u64,
+    heartbeat: Heartbeat,
 
     /// We remember all peers we found through peer exchange, since those peers are not considered
     /// as safe as randomly discovered outbound peers. This behaviour diverges from the go
@@ -516,11 +513,10 @@ where
                 config.backoff_slack(),
             ),
             mcache: MessageCache::new(config.history_gossip(), config.history_length()),
-            heartbeat: Ticker::new_with_next(
+            heartbeat: Heartbeat::new(
                 config.heartbeat_interval(),
                 config.heartbeat_initial_delay(),
             ),
-            heartbeat_ticks: 0,
             px_peers: HashSet::new(),
             outbound_peers: HashSet::new(),
             peer_score: Box::new(NoopPeerScoreService::new()),
@@ -2270,11 +2266,9 @@ where
     }
 
     /// Heartbeat function which shifts the memcache and updates the mesh.
-    fn heartbeat(&mut self) {
+    fn on_heartbeat(&mut self, heartbeat_ticks: u64) {
         debug!("Starting heartbeat");
         let start = Instant::now();
-
-        self.heartbeat_ticks += 1;
 
         let mut to_graft = HashMap::new();
         let mut to_prune = HashMap::new();
@@ -2294,7 +2288,7 @@ where
         }
 
         // check connections to explicit peers
-        if self.heartbeat_ticks % self.config.check_explicit_peers_ticks() == 0 {
+        if heartbeat_ticks % self.config.check_explicit_peers_ticks() == 0 {
             for p in self.explicit_peers.clone() {
                 self.check_explicit_peer_connection(&p);
             }
@@ -2746,7 +2740,7 @@ where
         for (peer, topics) in to_graft.into_iter() {
             for topic in &topics {
                 // inform scoring of graft
-                self.peer_score.peer_score_graft(&peer, &topic);
+                self.peer_score.peer_score_graft(&peer, topic);
 
                 // inform the handler of the peer being added to the mesh
                 // If the peer did not previously exist in any mesh, inform the handler
@@ -3436,8 +3430,8 @@ where
         // update scores
         self.peer_score.poll_ticker_refresh_scores(cx);
 
-        while let Poll::Ready(Some(_)) = self.heartbeat.poll_next_unpin(cx) {
-            self.heartbeat();
+        while let Poll::Ready(Some(tick)) = self.heartbeat.poll_next_unpin(cx) {
+            self.on_heartbeat(tick);
         }
 
         Poll::Pending
@@ -3456,7 +3450,6 @@ impl<C: DataTransform, F: TopicSubscriptionFilter> fmt::Debug for Behaviour<C, F
             .field("fanout", &self.fanout)
             .field("fanout_last_pub", &self.fanout_last_pub)
             .field("mcache", &self.mcache)
-            .field("heartbeat", &self.heartbeat)
             .finish()
     }
 }
