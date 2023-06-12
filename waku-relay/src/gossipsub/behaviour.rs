@@ -44,6 +44,7 @@ use rand::{seq::SliceRandom, thread_rng};
 
 use crate::gossipsub::backoff::BackoffStorage;
 use crate::gossipsub::config::{Config, MessageAuthenticity, ValidationMode};
+use crate::gossipsub::connection_manager::ConnectionManager;
 use crate::gossipsub::error::{
     MessageValidationError as ValidationError, PublishError, SubscriptionError,
 };
@@ -74,8 +75,8 @@ use crate::gossipsub::time_cache::{DuplicateCache, TimeCache};
 use crate::gossipsub::topic::{Hasher, Topic, TopicHash};
 use crate::gossipsub::transform::{DataTransform, IdentityTransform};
 use crate::gossipsub::types::{
-    ControlAction, Message, MessageAcceptance, PeerConnections, PeerInfo, PeerKind, RawMessage,
-    Rpc, Subscription, SubscriptionAction,
+    ControlAction, Message, MessageAcceptance, PeerInfo, PeerKind, RawMessage, Rpc, Subscription,
+    SubscriptionAction,
 };
 
 fn get_ip_addr(addr: &Multiaddr) -> Option<IpAddr> {
@@ -95,16 +96,13 @@ fn peer_added_to_mesh(
     mesh: &HashMap<TopicHash, BTreeSet<PeerId>>,
     known_topics: Option<&BTreeSet<TopicHash>>,
     events: &mut VecDeque<ToSwarm<Event, HandlerIn>>,
-    connections: &HashMap<PeerId, PeerConnections>,
+    connections: &ConnectionManager,
 ) {
     // Ensure there is an active connection
     let connection_id = {
-        let conn = connections.get(&peer_id).expect("To be connected to peer.");
-        assert!(
-            !conn.connections.is_empty(),
-            "Must have at least one connection"
-        );
-        conn.connections[0]
+        let conn = connections.connections(&peer_id).next();
+        assert!(conn.is_some(), "Must have at least one connection");
+        conn.unwrap()
     };
 
     if let Some(topics) = known_topics {
@@ -123,7 +121,7 @@ fn peer_added_to_mesh(
     events.push_back(ToSwarm::NotifyHandler {
         peer_id,
         event: HandlerIn::JoinedMesh,
-        handler: NotifyHandler::One(connection_id),
+        handler: NotifyHandler::One(*connection_id),
     });
 }
 
@@ -136,14 +134,12 @@ fn peer_removed_from_mesh(
     mesh: &HashMap<TopicHash, BTreeSet<PeerId>>,
     known_topics: Option<&BTreeSet<TopicHash>>,
     events: &mut VecDeque<ToSwarm<Event, HandlerIn>>,
-    connections: &HashMap<PeerId, PeerConnections>,
+    connections: &ConnectionManager,
 ) {
     // Ensure there is an active connection
     let connection_id = connections
-        .get(&peer_id)
-        .expect("To be connected to peer.")
-        .connections
-        .get(0)
+        .connections(&peer_id)
+        .next()
         .expect("There should be at least one connection to a peer.");
 
     if let Some(topics) = known_topics {
@@ -171,7 +167,7 @@ fn peer_removed_from_mesh(
 /// that gets as input the number of filtered peers.
 fn get_random_peers_dynamic(
     topic_peers: &HashMap<TopicHash, BTreeSet<PeerId>>,
-    connected_peers: &HashMap<PeerId, PeerConnections>,
+    connected_peers: &ConnectionManager,
     topic_hash: &TopicHash,
     // maps the number of total peers to the number of selected peers
     n_map: impl Fn(usize) -> usize,
@@ -182,13 +178,7 @@ fn get_random_peers_dynamic(
         Some(peer_list) => peer_list
             .iter()
             .cloned()
-            .filter(|p| {
-                f(p) && match connected_peers.get(p) {
-                    Some(connections) if connections.kind == PeerKind::Gossipsub => true,
-                    Some(connections) if connections.kind == PeerKind::Gossipsubv1_1 => true,
-                    _ => false,
-                }
-            })
+            .filter(|p| f(p) && connected_peers.kind(p).is_some_and(|k| k.is_gossipsub()))
             .collect(),
         None => Vec::new(),
     };
@@ -213,7 +203,7 @@ fn get_random_peers_dynamic(
 /// filtered by the function `f`.
 fn get_random_peers(
     topic_peers: &HashMap<TopicHash, BTreeSet<PeerId>>,
-    connected_peers: &HashMap<PeerId, PeerConnections>,
+    connected_peers: &ConnectionManager,
     topic_hash: &TopicHash,
     n: usize,
     f: impl FnMut(&PeerId) -> bool,
@@ -278,7 +268,7 @@ pub struct Behaviour<D = IdentityTransform, F = AllowAllSubscriptionFilter> {
 
     /// A set of connected peers, indexed by their [`PeerId`] tracking both the [`PeerKind`] and
     /// the set of [`ConnectionId`]s.
-    connected_peers: HashMap<PeerId, PeerConnections>,
+    connected_peers: ConnectionManager,
 
     /// A map of all connected peers - A map of topic hash to a list of gossipsub peer Ids.
     topic_peers: HashMap<TopicHash, BTreeSet<PeerId>>,
@@ -317,10 +307,6 @@ pub struct Behaviour<D = IdentityTransform, F = AllowAllSubscriptionFilter> {
     /// implementation to avoid possible love bombing attacks in PX. When disconnecting peers will
     /// be removed from this list which may result in a true outbound rediscovery.
     px_peers: HashSet<PeerId>,
-
-    /// Set of connected outbound peers (we only consider true outbound peers found through
-    /// discovery and not by PX).
-    outbound_peers: HashSet<PeerId>,
 
     /// Stores optional peer score data together with thresholds, decay interval and gossip
     /// promises.
@@ -518,12 +504,11 @@ where
                 config.heartbeat_initial_delay(),
             ),
             px_peers: HashSet::new(),
-            outbound_peers: HashSet::new(),
             peer_score: Box::new(NoopPeerScoreService::new()),
             count_received_ihave: HashMap::new(),
             count_sent_iwant: HashMap::new(),
             pending_iwant_msgs: HashSet::new(),
-            connected_peers: HashMap::new(),
+            connected_peers: ConnectionManager::new(),
             published_message_ids: DuplicateCache::new(config.published_message_ids_cache_time()),
             config,
             subscription_filter,
@@ -567,7 +552,7 @@ where
 
     /// Lists all known peers and their associated protocol.
     pub fn peer_protocol(&self) -> impl Iterator<Item = (&PeerId, &PeerKind)> {
-        self.connected_peers.iter().map(|(k, v)| (k, &v.kind))
+        self.connected_peers.peer_protocol()
     }
 
     /// Returns the gossipsub score for a given peer, if one exists.
@@ -744,12 +729,11 @@ where
                 }
 
                 // Floodsub peers
-                for (peer, connections) in &self.connected_peers {
-                    if connections.kind == PeerKind::Floodsub
-                        && !self
-                            .peer_score
-                            .score_below_threshold(peer, |ts| ts.publish_threshold)
-                            .0
+                for peer in self.connected_peers.floodsub_peers() {
+                    if !self
+                        .peer_score
+                        .score_below_threshold(peer, |ts| ts.publish_threshold)
+                        .0
                     {
                         recipient_peers.insert(*peer);
                     }
@@ -1039,9 +1023,9 @@ where
             self.fanout_last_pub.remove(topic_hash);
         }
 
-        let fanaout_added = added_peers.len();
+        let fanout_added = added_peers.len();
         self.metrics
-            .peers_included(topic_hash, Inclusion::Fanout, fanaout_added);
+            .peers_included(topic_hash, Inclusion::Fanout, fanout_added);
 
         // check if we need to get more peers, which we randomly select
         if added_peers.len() < self.config.mesh_n() {
@@ -1071,7 +1055,7 @@ where
             mesh_peers.extend(new_peers);
         }
 
-        let random_added = added_peers.len() - fanaout_added;
+        let random_added = added_peers.len() - fanout_added;
         self.metrics
             .peers_included(topic_hash, Inclusion::Random, random_added);
 
@@ -1114,7 +1098,7 @@ where
     ) -> ControlAction {
         self.peer_score.peer_score_prune(peer, topic_hash);
 
-        match self.connected_peers.get(peer).map(|v| &v.kind) {
+        match self.connected_peers.kind(peer) {
             Some(PeerKind::Floodsub) => {
                 error!("Attempted to prune a Floodsub peer");
             }
@@ -1646,7 +1630,7 @@ where
                     // check mesh upper bound and only allow graft if the upper bound is not reached or
                     // if it is an outbound peer
                     if peers.len() >= self.config.mesh_n_high()
-                        && !self.outbound_peers.contains(peer_id)
+                        && !self.connected_peers.is_outbound(peer_id)
                     {
                         to_prune_topics.insert(topic_hash.clone());
                         continue;
@@ -2137,12 +2121,10 @@ where
 
                     // if the mesh needs peers add the peer to the mesh
                     if !self.explicit_peers.contains(propagation_source)
-                        && matches!(
-                            self.connected_peers
-                                .get(propagation_source)
-                                .map(|v| &v.kind),
-                            Some(PeerKind::Gossipsubv1_1) | Some(PeerKind::Gossipsub)
-                        )
+                        && self
+                            .connected_peers
+                            .kind(propagation_source)
+                            .is_some_and(|k| k.is_gossipsub())
                         && !self
                             .peer_score
                             .score_below_threshold(propagation_source, |_| 0.0)
@@ -2280,7 +2262,7 @@ where
 
         // Cache the scores of all connected peers, and record metrics for current penalties.
         let mut scores = HashMap::with_capacity(self.connected_peers.len());
-        for peer_id in self.connected_peers.keys() {
+        for peer_id in self.connected_peers.peers() {
             scores.entry(peer_id).or_insert_with(|| {
                 self.peer_score
                     .peer_score_metric_score(peer_id, &mut self.metrics)
@@ -2292,7 +2274,6 @@ where
             let explicit_peers = &self.explicit_peers;
             let backoffs = &self.backoffs;
             let topic_peers = &self.topic_peers;
-            let outbound_peers = &self.outbound_peers;
 
             // drop all peers with negative score, without PX
             // if there is at some point a stable retain method for BTreeSet the following can be
@@ -2384,10 +2365,9 @@ where
 
                 // count total number of outbound peers
                 let mut outbound = {
-                    let outbound_peers = &self.outbound_peers;
                     shuffled
                         .iter()
-                        .filter(|p| outbound_peers.contains(*p))
+                        .filter(|p| self.connected_peers.is_outbound(p))
                         .count()
                 };
 
@@ -2398,7 +2378,7 @@ where
                     if removed == excess_peer_no {
                         break;
                     }
-                    if self.outbound_peers.contains(&peer) {
+                    if self.connected_peers.is_outbound(&peer) {
                         if outbound <= self.config.mesh_outbound_min() {
                             // do not remove anymore outbound peers
                             continue;
@@ -2422,7 +2402,12 @@ where
             // do we have enough outbound peers?
             if peers.len() >= self.config.mesh_n_low() {
                 // count number of outbound peers we have
-                let outbound = { peers.iter().filter(|p| outbound_peers.contains(*p)).count() };
+                let outbound = {
+                    peers
+                        .iter()
+                        .filter(|p| self.connected_peers.is_outbound(p))
+                        .count()
+                };
 
                 // if we have not enough outbound peers, graft to some new outbound peers
                 if outbound < self.config.mesh_outbound_min() {
@@ -2437,7 +2422,7 @@ where
                                 && !explicit_peers.contains(peer)
                                 && !backoffs.is_backoff_with_slack(topic_hash, peer)
                                 && *scores.get(peer).unwrap_or(&0.0) >= 0.0
-                                && outbound_peers.contains(peer)
+                                && self.connected_peers.is_outbound(peer)
                         },
                     );
                     for peer in &peer_list {
@@ -2452,7 +2437,7 @@ where
                 }
             }
 
-            // TODO: Review this oportunistic grafting section
+            // TODO: Review this opportunistic grafting section
             // // should we try to improve the mesh with opportunistic grafting?
             // if self.heartbeat_ticks % self.config.opportunistic_graft_ticks() == 0
             //     && peers.len() > 1
@@ -3078,14 +3063,19 @@ where
             ..
         }: ConnectionEstablished,
     ) {
-        // Diverging from the go implementation we only want to consider a peer as outbound peer
-        // if its first connection is outbound.
-
-        if endpoint.is_dialer() && other_established == 0 && !self.px_peers.contains(&peer_id) {
-            // The first connection is outbound and it is not a peer from peer exchange => mark
-            // it as outbound peer
-            self.outbound_peers.insert(peer_id);
-        }
+        // By default we assume a peer is only a floodsub peer.
+        //
+        // The protocol negotiation occurs once a message is sent/received. Once this happens we
+        // update the type of peer that this is in order to determine which kind of routing should
+        // occur.
+        //
+        // If the first connection is outbound and it is not a peer from peer exchange, we mark
+        // it as outbound peer. This diverges from the Go implementation: we only consider a peer
+        // as outbound peer if its first connection is outbound.
+        let outbound =
+            endpoint.is_dialer() && other_established == 0 && !self.px_peers.contains(&peer_id);
+        self.connected_peers
+            .track_connection(peer_id, connection_id, PeerKind::Floodsub, outbound);
 
         // Add the IP to the peer scoring system
         if let Some(ip) = get_ip_addr(endpoint.get_remote_address()) {
@@ -3097,20 +3087,6 @@ where
                 endpoint
             )
         }
-
-        // By default we assume a peer is only a floodsub peer.
-        //
-        // The protocol negotiation occurs once a message is sent/received. Once this happens we
-        // update the type of peer that this is in order to determine which kind of routing should
-        // occur.
-        self.connected_peers
-            .entry(peer_id)
-            .or_insert(PeerConnections {
-                kind: PeerKind::Floodsub,
-                connections: vec![],
-            })
-            .connections
-            .push(connection_id);
 
         if other_established == 0 {
             // Ignore connections from blacklisted peers.
@@ -3168,28 +3144,22 @@ where
 
         if remaining_established != 0 {
             // Remove the connection from the list
-            if let Some(connections) = self.connected_peers.get_mut(&peer_id) {
-                let index = connections
-                    .connections
-                    .iter()
-                    .position(|v| v == &connection_id)
-                    .expect("Previously established connection to peer must be present");
-                connections.connections.remove(index);
+            self.connected_peers
+                .remove_connection(&peer_id, connection_id);
 
-                // If there are more connections and this peer is in a mesh, inform the first connection
-                // handler.
-                if !connections.connections.is_empty() {
-                    if let Some(topics) = self.peer_topics.get(&peer_id) {
-                        for topic in topics {
-                            if let Some(mesh_peers) = self.mesh.get(topic) {
-                                if mesh_peers.contains(&peer_id) {
-                                    self.events.push_back(ToSwarm::NotifyHandler {
-                                        peer_id,
-                                        event: HandlerIn::JoinedMesh,
-                                        handler: NotifyHandler::One(connections.connections[0]),
-                                    });
-                                    break;
-                                }
+            // If there are more connections and this peer is in a mesh, inform the first connection
+            // handler.
+            if let Some(connection) = self.connected_peers.connections(&peer_id).next() {
+                if let Some(topics) = self.peer_topics.get(&peer_id) {
+                    for topic in topics {
+                        if let Some(mesh_peers) = self.mesh.get(topic) {
+                            if mesh_peers.contains(&peer_id) {
+                                self.events.push_back(ToSwarm::NotifyHandler {
+                                    peer_id,
+                                    event: HandlerIn::JoinedMesh,
+                                    handler: NotifyHandler::One(*connection),
+                                });
+                                break;
                             }
                         }
                     }
@@ -3247,7 +3217,6 @@ where
 
             // Forget px and outbound status for this peer
             self.px_peers.remove(&peer_id);
-            self.outbound_peers.remove(&peer_id);
 
             // Remove peer from peer_topics and connected_peers
             // NOTE: It is possible the peer has already been removed from all mappings if it does not
@@ -3255,14 +3224,13 @@ where
             self.peer_topics.remove(&peer_id);
 
             // If metrics are enabled, register the disconnection of a peer based on its protocol.
-            let peer_kind = &self
+            let peer_kind = self
                 .connected_peers
-                .get(&peer_id)
-                .expect("Connected peer must be registered")
-                .kind;
-            self.metrics.peer_protocol_disconnected(peer_kind.clone());
+                .kind(&peer_id)
+                .expect("Connected peer must be registered");
+            self.metrics.peer_protocol_disconnected(peer_kind);
 
-            self.connected_peers.remove(&peer_id);
+            self.connected_peers.remove_peer(&peer_id);
 
             self.peer_score.peer_score_remove_peer(&peer_id);
         }
@@ -3364,7 +3332,7 @@ where
         match handler_event {
             HandlerEvent::PeerKind(kind) => {
                 // We have identified the protocol this peer is using
-                self.metrics.peer_protocol_connected(kind.clone());
+                self.metrics.peer_protocol_connected(kind);
 
                 if let PeerKind::NotSupported = kind {
                     debug!(
@@ -3375,7 +3343,7 @@ where
                         .push_back(ToSwarm::GenerateEvent(Event::GossipsubNotSupported {
                             peer_id: propagation_source,
                         }));
-                } else if let Some(conn) = self.connected_peers.get_mut(&propagation_source) {
+                } else if let Some(peer_kind) = self.connected_peers.kind(&propagation_source) {
                     // Only change the value if the old value is Floodsub (the default set in
                     // `NetworkBehaviour::on_event` with FromSwarm::ConnectionEstablished).
                     // All other PeerKind changes are ignored.
@@ -3383,8 +3351,8 @@ where
                         "New peer type found: {} for peer: {}",
                         kind, propagation_source
                     );
-                    if let PeerKind::Floodsub = conn.kind {
-                        conn.kind = kind;
+                    if peer_kind.is_floodsub() {
+                        self.connected_peers.set_kind(&propagation_source, kind);
                     }
                 }
             }
