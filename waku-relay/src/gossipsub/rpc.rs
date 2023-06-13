@@ -1,3 +1,4 @@
+pub use fragmentation::{fragment_rpc_message, FragmentationError};
 pub use proto::waku::relay::v2::{
     ControlGraft as ControlGraftProto, ControlIHave as ControlIHaveProto, ControlIHave,
     ControlIWant as ControlIWantProto, ControlMessage as ControlMessageProto,
@@ -7,6 +8,7 @@ pub use proto::waku::relay::v2::{
 pub use types::MessageRpc;
 pub use validation::validate_message_proto;
 
+mod fragmentation;
 mod proto;
 mod traits;
 mod types;
